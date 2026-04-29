@@ -1,0 +1,60 @@
+{
+	"version": "2.0.0",
+	"tasks": [
+		{
+			"label": "fetch_sp3",
+			"type": "shell",
+			"command": "python -u d:\\projects\\515450\\fetch_sp3.py"
+		},
+		{
+			"label": "backtest_run",
+			"type": "shell",
+			"command": "python -u backtest.py"
+		},
+		{
+			"label": "backtest_v3",
+			"type": "shell",
+			"command": "python -u backtest.py"
+		},
+		{
+			"label": "backtest_v4",
+			"type": "shell",
+			"command": "python -u backtest.py"
+		},
+		{
+			"label": "backtest_v4b",
+			"type": "shell",
+			"command": "python -u backtest.py"
+		},
+		{
+			"label": "backtest_sharpe",
+			"type": "shell",
+			"command": "python -u backtest.py"
+		},
+		{
+			"label": "install_openpyxl",
+			"type": "shell",
+			"command": "pip install openpyxl --quiet"
+		},
+		{
+			"label": "run backtest",
+			"type": "shell",
+			"command": "python backtest.py"
+		},
+		{
+			"label": "run backtest",
+			"type": "shell",
+			"command": "python backtest.py"
+		},
+		{
+			"label": "param sweep",
+			"type": "shell",
+			"command": "python param_sweep.py"
+		},
+		{
+			"label": "param sweep",
+			"type": "shell",
+			"command": "python param_sweep.py"
+		}
+	]
+}
