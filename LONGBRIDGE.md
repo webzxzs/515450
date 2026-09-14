@@ -46,17 +46,18 @@ python backtest.py --adjust forward
 python backtest.py --refresh
 ```
 
-## 标的代码
+## 默认标的代码
 
-Longbridge 使用 `CODE.MARKET`：
+Longbridge 使用 `CODE.MARKET`，当前默认组合为：
 
 ```text
+513180.SH
 515450.SH
-513130.SH
-510300.SH
+513300.SH
+159783.SZ
 ```
 
-CLI 也接受常见沪深纯数字代码，项目会自动补市场后缀。
+CLI 也接受常见沪深纯数字代码，项目会自动补 `.SH` / `.SZ`。
 
 ## 多 ETF 数据对齐
 
