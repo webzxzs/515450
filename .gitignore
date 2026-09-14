@@ -22,20 +22,11 @@ env/
 .DS_Store
 Thumbs.db
 
-# Generated backtest outputs
-*.png
-*.xlsx
-trades.csv
-daily.csv
-monthly.csv
-mc_summary.csv
-dual_sweep2_best.txt
-dual_sweep2_full.csv
+# Generated portfolio backtest outputs
+portfolio_*.csv
+portfolio_*.xlsx
+dca_only_summary.csv
 
-# Legacy/local market-data snapshots: Longbridge cache lives outside the repo
-index_data.csv
-index_data_hfq.csv
-index_hstech.csv
-hst_hfq.csv
-etf_513130.csv
-combined_hst.csv
+# Longbridge cache lives outside the repository; ignore accidental snapshots
+*_actual.csv
+*_forward.csv
