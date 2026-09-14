@@ -4,7 +4,7 @@ Use this skill when working on the `515450` repository.
 
 ## Project goal
 
-The repository implements a **multi-ETF periodic investment + periodic rebalancing** strategy using Longbridge daily market data.
+The repository implements a **multi-ETF periodic investment + periodic rebalancing** strategy using Longbridge daily market data, plus research tooling for robust weight discovery, out-of-sample validation, and portfolio risk decomposition.
 
 Do not reintroduce the removed grid, Brownian-bridge intraday simulation, Monte Carlo grid triggering, AkShare, HFQ CSV, or index-extension paths unless the user explicitly asks for them.
 
@@ -13,6 +13,8 @@ Do not reintroduce the removed grid, Brownian-bridge intraday simulation, Monte 
 ```bash
 python backtest.py
 python weight_sweep.py
+python walk_forward.py
+python risk_analysis.py
 ```
 
 ## Core strategy
@@ -33,6 +35,8 @@ python weight_sweep.py
 
 The engine aligns symbols on the intersection of daily trading dates. Cache is external to the repository.
 
+Current data caveat: research still uses the project's existing Longbridge close-price history. Dividend/cash-distribution accounting is a separate future data-layer improvement and should not be silently mixed into weight-method changes.
+
 ## Defaults
 
 ```text
@@ -43,9 +47,22 @@ Adjustment: actual
 SH/SZ lot size: 100
 ```
 
+## Research sequence
+
+When the user asks for a reasonable or robust allocation, do not stop at the historical sweep. Use this sequence:
+
+```text
+1. weight_sweep.py     -> discovery on full history
+2. walk_forward.py     -> strictly chronological OOS validation
+3. risk_analysis.py    -> capital weight vs actual risk concentration
+4. only then consider changing DEFAULT_PORTFOLIO
+```
+
+A candidate allocation is stronger when it lies in a broad stable region, survives OOS windows, and does not hide a single-factor risk concentration.
+
 ## Weight exploration
 
-Use `weight_sweep.py` when the user asks for a reasonable, robust, optimal, or exploratory allocation across the portfolio ETFs.
+Use `weight_sweep.py` for broad discovery.
 
 Default search constraints:
 
@@ -66,6 +83,70 @@ weight_sweep_top.csv
 weight_sweep_recommendation.csv
 ```
 
+## Walk-Forward validation
+
+Use `walk_forward.py` when judging whether the weight-selection process generalizes.
+
+Default protocol:
+
+```text
+Train: previous 3 years
+Test: next 12 months
+Roll: 12 months
+Candidate grid: same bounded grid as weight_sweep.py
+```
+
+Hard rule: no test-period observation may enter training, ranking, or weight selection.
+
+Each OOS window is an independent DCA validation account. This intentionally isolates parameter-selection quality. The stitched OOS TWR path is a diagnostic risk series, not a literal continuous live-account simulation.
+
+Primary outputs:
+
+```text
+walk_forward_windows.csv
+walk_forward_oos_nav.csv
+walk_forward_summary.csv
+```
+
+Important diagnostics:
+
+- mean / median / worst OOS XIRR;
+- hit rate and excess XIRR versus equal weight and current default;
+- stitched OOS Sharpe / max drawdown / annualized TWR;
+- selected-weight mean, std, min, max across windows.
+
+If selected weights jump from one boundary to another across adjacent windows, treat that instability as evidence against precision even if average OOS return is acceptable.
+
+## Risk analysis
+
+Use `risk_analysis.py` to test whether capital diversification is also risk diversification.
+
+Compute and inspect:
+
+- annualized asset volatilities;
+- correlation matrix;
+- portfolio volatility;
+- component risk contribution and risk-share percentages;
+- diversification ratio;
+- PCA first-component explained share;
+- effective risk bets;
+- rolling one-year risk concentration;
+- calendar-year regime snapshots.
+
+Do not use equal capital weights or HHI alone as evidence of diversification. Three growth ETFs can carry one common risk factor even at equal 25% capital weights.
+
+Primary outputs:
+
+```text
+risk_summary.csv
+risk_contribution.csv
+risk_correlation.csv
+risk_covariance_annual.csv
+risk_pca.csv
+risk_rolling.csv
+risk_by_year.csv
+```
+
 ## Important interfaces
 
 `parse_portfolio(spec)`
@@ -83,6 +164,15 @@ weight_sweep_recommendation.csv
 `rank_results(...)`
 : Rank weight candidates using the robust multi-objective score.
 
+`build_walk_forward_windows(...)`
+: Build chronological train -> test windows with no overlap.
+
+`static_risk_report(...)`
+: Compute covariance/correlation, risk contributions, diversification ratio, and PCA diagnostics.
+
+`rolling_risk_report(...)`
+: Track risk concentration through time.
+
 `BacktestResult`
 : Contains `summary`, `daily`, `monthly`, and `trades`.
 
@@ -94,7 +184,7 @@ Run:
 python -m unittest -v
 ```
 
-When changing accounting or search logic, verify at minimum:
+When changing accounting or research logic, verify at minimum:
 
 - total contribution equals monthly contribution × contribution months;
 - no negative holdings;
@@ -104,4 +194,9 @@ When changing accounting or search logic, verify at minimum:
 - weights sum to 1 after parsing/search generation;
 - search weights stay within configured min/max bounds;
 - output metrics use cash-flow-aware returns rather than treating contributions as investment gains;
-- robust ranking does not reduce to full-period return alone.
+- robust ranking does not reduce to full-period return alone;
+- walk-forward training ends strictly before testing begins;
+- no OOS observation is used to choose its own weights;
+- risk-share components sum to ~100% (allowing numerical tolerance);
+- identical perfectly correlated assets do not create fake diversification benefits;
+- rolling risk output includes the latest available date.

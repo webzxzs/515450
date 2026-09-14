@@ -20,6 +20,18 @@
       "problemMatcher": []
     },
     {
+      "label": "Walk-forward validation",
+      "type": "shell",
+      "command": "python walk_forward.py",
+      "problemMatcher": []
+    },
+    {
+      "label": "Portfolio risk analysis",
+      "type": "shell",
+      "command": "python risk_analysis.py",
+      "problemMatcher": []
+    },
+    {
       "label": "Portfolio example 30-30-20-20",
       "type": "shell",
       "command": "python backtest.py --portfolio \"513180.SH:0.3,515450.SH:0.3,513300.SH:0.2,159783.SZ:0.2\" --monthly 6000 --rebalance-months 6",
