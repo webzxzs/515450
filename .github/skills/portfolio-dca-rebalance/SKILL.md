@@ -8,10 +8,11 @@ The repository implements a **multi-ETF periodic investment + periodic rebalanci
 
 Do not reintroduce the removed grid, Brownian-bridge intraday simulation, Monte Carlo grid triggering, AkShare, HFQ CSV, or index-extension paths unless the user explicitly asks for them.
 
-## Canonical entrypoint
+## Canonical entrypoints
 
 ```bash
 python backtest.py
+python weight_sweep.py
 ```
 
 ## Core strategy
@@ -42,6 +43,29 @@ Adjustment: actual
 SH/SZ lot size: 100
 ```
 
+## Weight exploration
+
+Use `weight_sweep.py` when the user asks for a reasonable, robust, optimal, or exploratory allocation across the portfolio ETFs.
+
+Default search constraints:
+
+```text
+Step: 5%
+Min per ETF: 10%
+Max per ETF: 50%
+Chronological folds: 3
+```
+
+Do **not** choose weights solely by maximum historical return. Rank candidates using the existing multi-objective score: full-period XIRR, Sharpe, max drawdown, worst-fold XIRR, average fold XIRR, fold stability, and diversification. Prefer the recommended candidate near the center of the top-ranked region rather than a fragile single optimum.
+
+Main outputs:
+
+```text
+weight_sweep_results.csv
+weight_sweep_top.csv
+weight_sweep_recommendation.csv
+```
+
 ## Important interfaces
 
 `parse_portfolio(spec)`
@@ -53,6 +77,12 @@ SH/SZ lot size: 100
 `run_strategy(prices, StrategyConfig)`
 : Pure portfolio backtest; use this for tests and experiments.
 
+`generate_weight_grid(...)`
+: Enumerate bounded portfolio allocations for weight search.
+
+`rank_results(...)`
+: Rank weight candidates using the robust multi-objective score.
+
 `BacktestResult`
 : Contains `summary`, `daily`, `monthly`, and `trades`.
 
@@ -61,15 +91,17 @@ SH/SZ lot size: 100
 Run:
 
 ```bash
-python -m unittest -v test_backtest.py
+python -m unittest -v
 ```
 
-When changing accounting logic, verify at minimum:
+When changing accounting or search logic, verify at minimum:
 
 - total contribution equals monthly contribution × contribution months;
 - no negative holdings;
 - no buy can spend more than available cash;
 - rebalance months occur at the configured cadence;
 - DCA-only mode never creates rebalance trades;
-- weights sum to 1 after parsing;
-- output metrics use cash-flow-aware returns rather than treating contributions as investment gains.
+- weights sum to 1 after parsing/search generation;
+- search weights stay within configured min/max bounds;
+- output metrics use cash-flow-aware returns rather than treating contributions as investment gains;
+- robust ranking does not reduce to full-period return alone.
