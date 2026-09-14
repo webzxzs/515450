@@ -45,8 +45,8 @@ def _parse_wrapper_args(argv):
     )
     parser.add_argument(
         "--lb-start",
-        default="2000-01-01",
-        help="earliest date requested from Longbridge (default: 2000-01-01)",
+        default="2020-01-01",
+        help="earliest date requested from Longbridge (default: 2020-01-01)",
     )
     return parser.parse_known_args(argv)
 
