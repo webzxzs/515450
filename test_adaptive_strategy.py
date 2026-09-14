@@ -72,6 +72,27 @@ class AdaptiveStrategyTests(unittest.TestCase):
         self.assertGreater(int(tight.summary["rebalance_events"]), 0)
         self.assertEqual(int(loose.summary["rebalance_events"]), 0)
 
+    def test_threshold_does_not_treat_uninvested_cash_as_weight_drift(self):
+        prices = pd.DataFrame(
+            {
+                "date": pd.to_datetime(["2024-01-02", "2024-02-01", "2024-03-01"]),
+                "A": [10.0, 10.0, 10.0],
+                "B": [10.0, 10.0, 10.0],
+            }
+        )
+        result = run_adaptive_strategy(
+            prices,
+            self._config(
+                monthly_contribution=100.0,
+                lot_sizes={"A": 100, "B": 100},
+                contribution_mode="underweight",
+                rebalance_rule="threshold",
+                rebalance_threshold=0.01,
+            ),
+        )
+        self.assertEqual(int(result.summary["rebalance_events"]), 0)
+        self.assertEqual(float(result.summary["ending_max_weight_drift"]), 0.0)
+
     def test_periodic_rebalance_cadence_is_respected(self):
         result = run_adaptive_strategy(
             self._prices(),
@@ -85,9 +106,11 @@ class AdaptiveStrategyTests(unittest.TestCase):
         triggers = result.monthly.loc[result.monthly["rebalanced"], "rebalance_trigger"].tolist()
         self.assertEqual(triggers, ["periodic", "periodic"])
 
-    def test_policy_grid_contains_both_contribution_styles(self):
+    def test_default_policy_grid_has_sixteen_rules(self):
         policies = build_policy_variants([1, 3, 6, 12], [0.03, 0.05, 0.10])
         names = {str(item["policy"]) for item in policies}
+        self.assertEqual(len(policies), 16)
+        self.assertEqual(len(names), 16)
         self.assertIn("target_periodic_12m", names)
         self.assertIn("underweight_periodic_3m", names)
         self.assertIn("target_threshold_5pct", names)
