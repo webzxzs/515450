@@ -20,6 +20,12 @@
       "problemMatcher": []
     },
     {
+      "label": "Adaptive weight and rebalance sweep",
+      "type": "shell",
+      "command": "python policy_sweep.py",
+      "problemMatcher": []
+    },
+    {
       "label": "Walk-forward validation",
       "type": "shell",
       "command": "python walk_forward.py",
