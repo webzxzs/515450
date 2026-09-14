@@ -10,7 +10,7 @@ Strategy
 4. Respect market lot sizes and commissions; unused cash remains in the account.
 
 The engine is intentionally price-source agnostic after loading: it only needs
-an aligned daily close-price table.  Longbridge is the canonical source used by
+an aligned daily close-price table. Longbridge is the canonical source used by
 ``main()``.
 """
 
@@ -18,9 +18,7 @@ from __future__ import annotations
 
 import argparse
 import math
-import os
 from dataclasses import dataclass
-from datetime import date
 from pathlib import Path
 from typing import Iterable
 
@@ -208,9 +206,20 @@ def _xirr(cashflows: list[tuple[pd.Timestamp, float]], guess: float = 0.1) -> fl
 
 def run_strategy(prices: pd.DataFrame, scfg: StrategyConfig) -> BacktestResult:
     symbols = list(scfg.weights)
+    if len(symbols) < 2:
+        raise ValueError("Strategy requires at least two ETFs")
+    if abs(sum(scfg.weights.values()) - 1.0) > 1e-6:
+        raise ValueError("Strategy weights must sum to 1")
+    if scfg.monthly_contribution <= 0:
+        raise ValueError("monthly_contribution must be > 0")
+    if scfg.rebalance_months < 0:
+        raise ValueError("rebalance_months must be >= 0")
+
     for symbol in symbols:
         if symbol not in prices.columns:
             raise ValueError(f"Missing price column: {symbol}")
+        if symbol not in scfg.lot_sizes or scfg.lot_sizes[symbol] <= 0:
+            raise ValueError(f"Invalid or missing lot size for {symbol}")
 
     shares = {symbol: 0 for symbol in symbols}
     cash = 0.0
@@ -230,7 +239,15 @@ def run_strategy(prices: pd.DataFrame, scfg: StrategyConfig) -> BacktestResult:
     def total_value(row: pd.Series) -> float:
         return cash + sum(position_value(row, s) for s in symbols)
 
-    def record_trade(ts: pd.Timestamp, symbol: str, side: str, reason: str, price: float, qty: int, fee: float):
+    def record_trade(
+        ts: pd.Timestamp,
+        symbol: str,
+        side: str,
+        reason: str,
+        price: float,
+        qty: int,
+        fee: float,
+    ):
         trades.append(
             {
                 "date": ts,
@@ -259,6 +276,10 @@ def run_strategy(prices: pd.DataFrame, scfg: StrategyConfig) -> BacktestResult:
         gross = price * qty
         fee = _fee(gross, scfg.commission_rate, scfg.min_commission)
         cash -= gross + fee
+        if cash < -1e-6:
+            raise RuntimeError(f"Negative cash after buying {symbol}: {cash}")
+        if abs(cash) < 1e-9:
+            cash = 0.0
         shares[symbol] += qty
         record_trade(ts, symbol, "BUY", reason, price, qty, fee)
         return qty
@@ -274,11 +295,13 @@ def run_strategy(prices: pd.DataFrame, scfg: StrategyConfig) -> BacktestResult:
         fee = _fee(gross, scfg.commission_rate, scfg.min_commission)
         cash += gross - fee
         shares[symbol] -= qty
+        if shares[symbol] < 0:
+            raise RuntimeError(f"Negative holdings after selling {symbol}")
         record_trade(ts, symbol, "SELL", reason, price, qty, fee)
         return qty
 
     def invest_contribution(ts: pd.Timestamp, row: pd.Series):
-        # Allocate only the new monthly contribution by target weights.  Residual
+        # Allocate only the new monthly contribution by target weights. Residual
         # cash from lot rounding is deliberately retained for future months.
         for symbol, weight in scfg.weights.items():
             budget = scfg.monthly_contribution * weight
@@ -291,7 +314,9 @@ def run_strategy(prices: pd.DataFrame, scfg: StrategyConfig) -> BacktestResult:
         equity = total_value(row)
         targets = {symbol: equity * weight for symbol, weight in scfg.weights.items()}
         desired_shares = {
-            symbol: _round_down_shares(targets[symbol] / float(row[symbol]), scfg.lot_sizes[symbol])
+            symbol: _round_down_shares(
+                targets[symbol] / float(row[symbol]), scfg.lot_sizes[symbol]
+            )
             for symbol in symbols
         }
 
@@ -343,7 +368,7 @@ def run_strategy(prices: pd.DataFrame, scfg: StrategyConfig) -> BacktestResult:
 
         value = total_value(row)
         if previous_value is None or previous_value <= 0:
-            twr_return = 0.0
+            twr_return = value / contribution_today - 1.0 if contribution_today > 0 else 0.0
         else:
             twr_return = (value - contribution_today) / previous_value - 1.0
         nav *= 1.0 + twr_return
@@ -373,7 +398,10 @@ def run_strategy(prices: pd.DataFrame, scfg: StrategyConfig) -> BacktestResult:
 
     daily_returns = daily_df["twr_return"].replace([np.inf, -np.inf], np.nan).dropna()
     daily_returns = daily_returns.iloc[1:] if len(daily_returns) > 1 else daily_returns
-    years = max((daily_df.iloc[-1]["date"] - daily_df.iloc[0]["date"]).days / 365.25, 1 / 365.25)
+    years = max(
+        (daily_df.iloc[-1]["date"] - daily_df.iloc[0]["date"]).days / 365.25,
+        1 / 365.25,
+    )
     ann_twr = float(daily_df.iloc[-1]["nav"] ** (1.0 / years) - 1.0)
     sharpe = (
         float(daily_returns.mean() / daily_returns.std(ddof=1) * np.sqrt(242))
@@ -384,7 +412,10 @@ def run_strategy(prices: pd.DataFrame, scfg: StrategyConfig) -> BacktestResult:
     drawdown = nav_series / nav_series.cummax() - 1.0
     max_dd = float(drawdown.min())
     fees = float(trades_df["fee"].sum()) if not trades_df.empty else 0.0
-    rebalance_trades = int((trades_df["reason"] == "REBALANCE").sum()) if not trades_df.empty else 0
+    rebalance_trades = (
+        int((trades_df["reason"] == "REBALANCE").sum()) if not trades_df.empty else 0
+    )
+    rebalance_events = int(monthly_df["rebalanced"].sum()) if not monthly_df.empty else 0
 
     summary = {
         "start": str(pd.Timestamp(daily_df.iloc[0]["date"]).date()),
@@ -399,6 +430,7 @@ def run_strategy(prices: pd.DataFrame, scfg: StrategyConfig) -> BacktestResult:
         "max_drawdown": max_dd,
         "total_fees": fees,
         "trade_count": int(len(trades_df)),
+        "rebalance_events": rebalance_events,
         "rebalance_trade_count": rebalance_trades,
         "ending_cash": float(cash),
     }
@@ -408,7 +440,12 @@ def run_strategy(prices: pd.DataFrame, scfg: StrategyConfig) -> BacktestResult:
         summary[f"ending_weight_{symbol}"] = value / final_value if final_value > 0 else 0.0
         summary[f"ending_shares_{symbol}"] = shares[symbol]
 
-    return BacktestResult(summary=summary, daily=daily_df, monthly=monthly_df, trades=trades_df)
+    return BacktestResult(
+        summary=summary,
+        daily=daily_df,
+        monthly=monthly_df,
+        trades=trades_df,
+    )
 
 
 def export_result(result: BacktestResult, prefix: str = "portfolio") -> None:
@@ -444,7 +481,12 @@ def _print_summary(title: str, summary: dict) -> None:
     print(f"期末资产: ¥{summary['final_value']:,.2f} | 盈亏: ¥{summary['pnl']:,.2f}")
     print(f"XIRR: {pct(summary['xirr'])} | 年化TWR: {pct(summary['annualized_twr'])}")
     print(f"Sharpe: {summary['sharpe']:.3f} | 最大回撤: {pct(summary['max_drawdown'])}")
-    print(f"交易次数: {summary['trade_count']} | 再平衡交易: {summary['rebalance_trade_count']} | 总费用: ¥{summary['total_fees']:,.2f}")
+    print(
+        f"交易次数: {summary['trade_count']} | "
+        f"再平衡次数: {summary['rebalance_events']} | "
+        f"再平衡交易: {summary['rebalance_trade_count']} | "
+        f"总费用: ¥{summary['total_fees']:,.2f}"
+    )
 
 
 def build_arg_parser() -> argparse.ArgumentParser:
@@ -454,7 +496,12 @@ def build_arg_parser() -> argparse.ArgumentParser:
         default=cfg.DEFAULT_PORTFOLIO,
         help="ETF及目标权重，例如 515450.SH:0.8,513130.SH:0.2",
     )
-    parser.add_argument("--monthly", type=float, default=cfg.MONTHLY_CONTRIBUTION, help="每月总定投金额")
+    parser.add_argument(
+        "--monthly",
+        type=float,
+        default=cfg.MONTHLY_CONTRIBUTION,
+        help="每月总定投金额",
+    )
     parser.add_argument(
         "--rebalance-months",
         type=int,
@@ -463,7 +510,11 @@ def build_arg_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--start", default=cfg.START_DATE)
     parser.add_argument("--end", default=None)
-    parser.add_argument("--adjust", choices=["actual", "forward"], default=cfg.PRICE_ADJUST)
+    parser.add_argument(
+        "--adjust",
+        choices=["actual", "forward"],
+        default=cfg.PRICE_ADJUST,
+    )
     parser.add_argument("--refresh", action="store_true", help="强制刷新 Longbridge 缓存")
     parser.add_argument("--commission", type=float, default=cfg.COMMISSION)
     parser.add_argument("--min-commission", type=float, default=cfg.MIN_COMMISSION)
@@ -472,7 +523,11 @@ def build_arg_parser() -> argparse.ArgumentParser:
         default="",
         help="可覆盖交易单位，例如 515450.SH:100,513130.SH:100",
     )
-    parser.add_argument("--no-benchmark", action="store_true", help="不运行“仅定投、不再平衡”对照组")
+    parser.add_argument(
+        "--no-benchmark",
+        action="store_true",
+        help="不运行“仅定投、不再平衡”对照组",
+    )
     return parser
 
 
@@ -496,8 +551,17 @@ def main() -> None:
     print("\n组合目标:")
     for symbol, weight in weights.items():
         print(f"  {symbol}: {weight:.1%} | lot={lot_sizes[symbol]}")
-    print(f"每月定投: ¥{args.monthly:,.2f} | 每 {args.rebalance_months} 个月再平衡" if args.rebalance_months else f"每月定投: ¥{args.monthly:,.2f} | 不再平衡")
-    print(f"共同交易区间: {prices['date'].iloc[0].date()} ~ {prices['date'].iloc[-1].date()} ({len(prices)} 天)")
+    if args.rebalance_months:
+        print(
+            f"每月定投: ¥{args.monthly:,.2f} | "
+            f"每 {args.rebalance_months} 个月再平衡"
+        )
+    else:
+        print(f"每月定投: ¥{args.monthly:,.2f} | 不再平衡")
+    print(
+        f"共同交易区间: {prices['date'].iloc[0].date()} ~ "
+        f"{prices['date'].iloc[-1].date()} ({len(prices)} 天)"
+    )
 
     scfg = StrategyConfig(
         weights=weights,
@@ -523,10 +587,15 @@ def main() -> None:
         benchmark = run_strategy(prices, benchmark_cfg)
         _print_summary("仅按目标权重定投（不再平衡）", benchmark.summary)
         pd.DataFrame([benchmark.summary]).to_csv(
-            OUTPUT_DIR / "dca_only_summary.csv", index=False, encoding="utf-8-sig"
+            OUTPUT_DIR / "dca_only_summary.csv",
+            index=False,
+            encoding="utf-8-sig",
         )
 
-    print("\n输出: portfolio_summary.csv / portfolio_daily.csv / portfolio_monthly.csv / portfolio_trades.csv / portfolio_backtest.xlsx")
+    print(
+        "\n输出: portfolio_summary.csv / portfolio_daily.csv / "
+        "portfolio_monthly.csv / portfolio_trades.csv / portfolio_backtest.xlsx"
+    )
 
 
 if __name__ == "__main__":
