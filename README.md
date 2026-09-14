@@ -11,17 +11,17 @@
 159783.SZ
 ```
 
-## 最重要的口径
+## 关键口径
 
-仓库里的默认组合：
+默认组合：
 
 ```text
 25% / 25% / 25% / 25%
 ```
 
-**只是方便快速运行的 benchmark，不是推荐比例，也不是搜索中心。**
+**只是 benchmark，不是推荐比例，也不是搜索中心。**
 
-权重研究默认仍会完整探索：
+权重研究默认完整探索：
 
 ```text
 单只最低权重  10%
@@ -30,33 +30,21 @@
 完整候选       375 组
 ```
 
-如果结果稳定，再考虑 2.5% 等更细搜索；不要一开始就假装存在 1% 精度的“最优比例”。
-
-## 默认数据口径：前复权
-
-长期收益研究默认使用：
+默认长期收益口径：
 
 ```text
 Longbridge forward
 ```
 
-即前复权价格。Longbridge 的 forward adjustment 用于处理拆分/分红等调整，因此比未复权价格更适合作为长期总收益研究代理。
-
-需要原始价格敏感性时仍可显式运行：
+即前复权。需要原始价格敏感性时可显式运行：
 
 ```bash
 python backtest.py --adjust actual
 ```
 
-项目没有可靠拿到这四只 A 股 ETF 的逐笔 Longbridge dividend history，因此不会伪造分红现金流。`adjustment_analysis.py` 用于对比 actual 与 forward，量化复权带来的差异。
+项目没有可靠拿到这四只 A 股 ETF 的逐笔 Longbridge dividend history，因此不会伪造分红现金流。`adjustment_analysis.py` 用于 actual vs forward 对账。
 
-详见：
-
-```text
-ADJUSTMENT.md
-```
-
-## 当前研究层级
+## 当前研究工具
 
 ```text
 backtest.py            稳定基线回测
@@ -65,21 +53,12 @@ policy_sweep.py        权重 + 定投资金方向 + 再平衡规则联合探索
 walk_forward.py        严格样本外验证
 risk_analysis.py       风险贡献 / 相关性 / PCA
 adjustment_analysis.py actual vs forward 对账
+adaptive_strategy.py   实验型定投 / 再平衡引擎
 ```
-
-另外：
-
-```text
-adaptive_strategy.py
-```
-
-是实验策略引擎，暂时与基线 `backtest.py` 分离，方便公平 A/B。
 
 ---
 
-# 1. 稳定基线回测
-
-运行：
+## 1. 稳定基线回测
 
 ```bash
 python backtest.py
@@ -114,19 +93,17 @@ python backtest.py \
   --rebalance-months 6
 ```
 
-权重会自动归一化，`30,30,20,20` 与 `0.3,0.3,0.2,0.2` 等价。
+权重会自动归一化。
 
 ---
 
-# 2. 权重探索
-
-运行：
+## 2. 权重探索
 
 ```bash
 python weight_sweep.py
 ```
 
-不是只找“历史收益最高”的组合，而是同时看：
+综合考虑：
 
 - XIRR；
 - Sharpe；
@@ -136,10 +113,11 @@ python weight_sweep.py
 - 分段稳定性；
 - HHI 权重集中度。
 
-默认 5% 网格：
+默认：
 
 ```text
 10% ~ 50% / ETF
+5% 步长
 375 组组合
 3 个连续时间分段
 ```
@@ -160,71 +138,73 @@ weight_sweep_recommendation.csv
 
 ---
 
-# 3. 自适应定投 + 再平衡联合探索
-
-这是当前新增的重点。
-
-运行：
+## 3. 自适应定投 + 再平衡联合探索
 
 ```bash
 python policy_sweep.py
 ```
 
-它研究的不只是“配多少”，还研究“钱怎么投进去”和“什么时候真的卖出再平衡”。
+它同时研究“配多少”“钱怎么投进去”“什么时候真的卖出再平衡”。
 
-## 两种定投方式
+### 两种定投方式
 
-### target
+`target`
+: 每月新资金按目标权重拆分。
 
-每月新资金机械按目标权重拆分。
+`underweight`
+: 每月新资金优先买当前低配资产，普通月不卖出，让新增现金尽量承担纠偏任务。
 
-### underweight
-
-每月新资金优先买当前低配资产，普通月**不卖出**。
-
-目标是让新增现金承担更多纠偏任务，减少不必要的卖出和换手。
-
-## 四类全组合再平衡规则
+### 再平衡规则
 
 实验引擎支持：
 
 ```text
 periodic   固定周期
 threshold  偏离阈值
-both/either 周期或阈值任一触发
-none       只靠新增资金纠偏，不主动卖出再平衡
+either     周期或阈值任一触发
+none       不做卖出式全组合再平衡
 ```
 
-`policy_sweep.py` 默认比较：
+`policy_sweep.py` 默认实际比较：
 
 ```text
 定投方式：target / underweight
 固定周期：1 / 3 / 6 / 12 个月
 偏离阈值：3% / 5% / 10%
-以及：不做卖出式再平衡
+以及：none
 ```
 
-## 不是围绕 25% 优化
+共 16 种执行规则。
 
-联合搜索分两步：
+### 完整联合搜索，不围绕 25%
+
+阶段 1 直接运行：
 
 ```text
-阶段 1
-完整 375 权重 × target DCA
-完整 375 权重 × underweight DCA
-分别找稳健权重区域
-
-阶段 2
-合并两边 Top 权重候选
-再比较所有定投 / 再平衡规则
+375 组权重 × 16 种执行规则 = 6000 组完整历史回测
 ```
 
-所以 25/25/25/25 只是保留一条 benchmark，不限制搜索方向。
+每一种执行规则独立保留自己的 Top 权重候选，因此不会让某一种再平衡方式先替其他规则筛权重。
+
+阶段 2 再对这些候选做连续时间分段稳健性验证：
+
+- 最差分段 XIRR；
+- 分段平均 XIRR；
+- 分段 XIRR 标准差；
+- 最差分段回撤。
+
+默认每种执行规则保留 15 组进入分段验证：
+
+```bash
+python policy_sweep.py --screen-top-per-policy 15
+```
+
+25/25/25/25 只是 375 组网格里的普通一行，并带 `is_equal_weight_benchmark` 标记。
 
 输出：
 
 ```text
-adaptive_seed_weight_rankings.csv
+adaptive_joint_screen.csv
 adaptive_policy_results.csv
 adaptive_policy_top.csv
 adaptive_policy_summary.csv
@@ -233,23 +213,17 @@ adaptive_top_region.csv
 
 重点看：
 
-- Top 区域每只 ETF 权重范围；
-- 权重标准差；
-- underweight DCA 在 Top 中出现比例；
-- 哪一种再平衡规则在不同权重下都稳；
-- 手续费、交易次数和平均权重偏离。
+- Top 区域每只 ETF 的均值、范围和标准差；
+- underweight DCA 在 Top 中占比；
+- 哪种执行规则在多组权重下都稳；
+- 手续费、再平衡次数和平均权重偏离；
+- 参数是否在边界间大幅跳动。
 
-详见：
-
-```text
-ADAPTIVE_POLICY.md
-```
+详见 `ADAPTIVE_POLICY.md`。
 
 ---
 
-# 4. Walk-Forward 样本外验证
-
-运行：
+## 4. Walk-Forward 样本外验证
 
 ```bash
 python walk_forward.py
@@ -258,12 +232,12 @@ python walk_forward.py
 默认：
 
 ```text
-过去 3 年：只用于选权重
+过去 3 年：训练 / 选权重
 未来 12 个月：完全样本外验证
 然后向前滚动
 ```
 
-测试期数据绝不能参与本轮权重选择。
+测试期数据不能参与本轮权重选择。
 
 输出：
 
@@ -273,20 +247,11 @@ walk_forward_oos_nav.csv
 walk_forward_summary.csv
 ```
 
-关注：
-
-- 平均 / 中位 / 最差 OOS XIRR；
-- 对等权 benchmark 的胜率；
-- 对当前默认 benchmark 的胜率；
-- 不同窗口选中权重的均值、标准差、最小值和最大值。
-
-如果相邻窗口权重从 10% 跳到 50%，不要继续追求更细精度；这说明参数本身不稳定。
+重点看 OOS XIRR、胜率、最差窗口和权重稳定性。如果相邻窗口权重从 10% 跳到 50%，不要继续追求更细精度。
 
 ---
 
-# 5. 风险贡献分析
-
-运行：
+## 5. 风险贡献分析
 
 ```bash
 python risk_analysis.py
@@ -296,85 +261,56 @@ python risk_analysis.py
 
 - 每只 ETF 年化波动率；
 - 相关性矩阵；
-- 组合波动率；
 - component risk contribution；
 - risk share；
 - diversification ratio；
 - PCA 第一主成分解释度；
 - effective risk bets；
-- rolling 1 年风险集中度；
-- 分年度风险快照。
+- rolling 1 年与分年度风险集中度。
 
-即使资本是 25/25/25/25，也可能实际承担的是高度集中的成长风险。
-
-输出：
-
-```text
-risk_summary.csv
-risk_contribution.csv
-risk_correlation.csv
-risk_covariance_annual.csv
-risk_pca.csv
-risk_rolling.csv
-risk_by_year.csv
-```
+资本 25/25/25/25 并不意味着风险 25/25/25/25。
 
 ---
 
-# 6. 复权敏感性 / 对账
-
-运行：
+## 6. 复权敏感性 / 对账
 
 ```bash
 python adjustment_analysis.py
 ```
 
-同时加载 actual 与 forward，比较：
+比较 actual 与 forward 下的：
 
-- 每只 ETF 未复权 / 前复权收益；
-- 年化收益差；
-- 复权差异出现在哪些日期；
-- 策略 XIRR / TWR / Sharpe / 最大回撤差异；
-- 期末资产、手续费和交易次数差异。
+- 每只 ETF 累计和年化收益；
+- adjustment wedge；
+- XIRR / TWR / Sharpe / 最大回撤；
+- 期末资产、手续费、交易次数。
 
-输出：
-
-```text
-adjustment_assets.csv
-adjustment_daily_wedges.csv
-adjustment_portfolio_comparison.csv
-```
+详见 `ADJUSTMENT.md`。
 
 ---
 
-# 推荐研究顺序
-
-当前建议：
+## 推荐研究顺序
 
 ```text
-1. python adjustment_analysis.py
-2. python weight_sweep.py
-3. python policy_sweep.py
-4. python walk_forward.py
-5. python risk_analysis.py
-6. 再决定是否修改默认长期比例和执行规则
+1. adjustment_analysis.py
+2. weight_sweep.py
+3. policy_sweep.py
+4. walk_forward.py
+5. risk_analysis.py
+6. 再决定是否修改长期比例和执行规则
 ```
 
-真正值得采用的结论应该同时满足：
+真正值得采用的结论应同时满足：
 
-- 权重不是历史单点尖峰；
-- 执行规则对 1/3/6/12 月或 3%/5%/10% 的小变化不过分敏感；
+- 权重位于稳定区域，不是单点尖峰；
+- 1/3/6/12 月或 3%/5%/10% 的小变化不会彻底反转结论；
 - Walk-Forward 样本外仍成立；
 - 风险贡献没有隐藏的单因子集中；
-- actual / forward 敏感性可以解释。
+- actual / forward 差异可以解释。
 
----
+## 数据源
 
-# 数据源
-
-只使用 Longbridge。
-
-首次使用前：
+只使用 Longbridge。首次使用前：
 
 ```bash
 longbridge auth login
@@ -391,13 +327,13 @@ python risk_analysis.py --refresh
 python adjustment_analysis.py --refresh
 ```
 
----
-
-# 测试
+## 测试
 
 ```bash
 python -m unittest -v
 ```
+
+仓库也包含 GitHub Actions 离线单元测试；CI 不访问 Longbridge 账户数据。
 
 ## 依赖
 
