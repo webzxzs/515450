@@ -22,13 +22,20 @@ env/
 .DS_Store
 Thumbs.db
 
-# Large generated outputs (re-run backtest to regenerate)
-dual_backtest.png
-dual_backtest.xlsx
+# Generated backtest outputs
+*.png
+*.xlsx
+trades.csv
+daily.csv
+monthly.csv
+mc_summary.csv
+dual_sweep2_best.txt
+dual_sweep2_full.csv
 
-# Sensitive / large data files (raw fetched data — re-fetchable)
+# Legacy/local market-data snapshots: Longbridge cache lives outside the repo
+index_data.csv
+index_data_hfq.csv
+index_hstech.csv
+hst_hfq.csv
 etf_513130.csv
 combined_hst.csv
-
-# Old sweep result dumps (keep best.txt, exclude full CSV for size)
-dual_sweep2_full.csv
