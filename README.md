@@ -31,6 +31,68 @@
 
 这些都只是默认值，运行时可直接覆盖。
 
+## 权重探索
+
+`weight_sweep.py` 用来探索这四只 ETF 的合理长期权重。它不是简单寻找“历史收益最高”的单一点，而是同时考虑：
+
+- 全周期 XIRR；
+- 全周期 Sharpe；
+- 最大回撤；
+- 3 个连续时间子区间里的最差 XIRR；
+- 子区间平均 XIRR；
+- 子区间收益稳定性；
+- 组合集中度。
+
+默认搜索：
+
+```text
+单只最低权重   10%
+单只最高权重   50%
+搜索步长       5%
+时间分段       3 段
+候选组合       375 组
+```
+
+运行：
+
+```bash
+python weight_sweep.py
+```
+
+强制刷新 Longbridge 行情：
+
+```bash
+python weight_sweep.py --refresh
+```
+
+更细的 2.5% 搜索：
+
+```bash
+python weight_sweep.py --step 0.025 --min-weight 0.10 --max-weight 0.50
+```
+
+默认综合评分权重：
+
+```text
+全周期 XIRR       25%
+最差分段 XIRR     25%
+全周期 Sharpe     15%
+最大回撤          15%
+分段平均 XIRR     10%
+分段稳定性         5%
+分散度             5%
+```
+
+程序会额外计算 Top 候选区域的平均权重，并推荐一个最接近该区域中心的**真实网格候选**，避免把单一历史最优点直接当作最终答案。
+
+输出：
+
+```text
+weight_sweep_results.csv          # 所有权重组合与指标
+weight_sweep_top.csv              # 综合排名前 N 名
+weight_sweep_recommendation.csv   # 推荐网格候选
+```
+
 ## 数据源
 
 项目只使用 Longbridge 拉取日 K 数据。数据由 `longbridge_data.py` 缓存在仓库外，不再维护 AkShare、历史 CSV、指数拟合数据或旧网格数据链路。
@@ -147,9 +209,16 @@ dca_only_summary.csv       # 纯定投对照组摘要
 
 ```text
 backtest.py        # 策略、组合核算、CLI 与输出
+weight_sweep.py    # 多目标权重探索与稳健排名
 longbridge_data.py # Longbridge 行情获取、标准化和缓存
 config.py          # 默认组合与默认参数
 LONGBRIDGE.md      # Longbridge 数据层说明
+```
+
+## 测试
+
+```bash
+python -m unittest -v
 ```
 
 ## 依赖
