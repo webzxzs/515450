@@ -2,7 +2,7 @@
 """Default configuration for the Longbridge ETF portfolio backtest."""
 
 # Portfolio. CLI --portfolio can replace this without editing code.
-DEFAULT_PORTFOLIO = "515450.SH:0.80,513130.SH:0.20"
+DEFAULT_PORTFOLIO = "513180.SH:0.25,515450.SH:0.25,513300.SH:0.25,159783.SZ:0.25"
 
 # Strategy cadence
 MONTHLY_CONTRIBUTION = 5000.0
