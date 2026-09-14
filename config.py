@@ -1,7 +1,9 @@
 #!/usr/bin/env python3
 """Default configuration for the Longbridge ETF portfolio backtest."""
 
-# Portfolio. CLI --portfolio can replace this without editing code.
+# Baseline portfolio for quick runs only. 25/25/25/25 is NOT a recommended or
+# assumed optimum; weight_sweep.py / policy_sweep.py are responsible for
+# discovering robust allocations from the configured ETF universe.
 DEFAULT_PORTFOLIO = "513180.SH:0.25,515450.SH:0.25,513300.SH:0.25,159783.SZ:0.25"
 
 # Strategy cadence
