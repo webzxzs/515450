@@ -35,7 +35,7 @@ The engine aligns symbols on the intersection of daily trading dates. Cache is e
 ## Defaults
 
 ```text
-Portfolio: 515450.SH 80%, 513130.SH 20%
+Portfolio: 513180.SH 25%, 515450.SH 25%, 513300.SH 25%, 159783.SZ 25%
 Monthly contribution: 5000
 Rebalance: every 3 contribution months
 Adjustment: actual
