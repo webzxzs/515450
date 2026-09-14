@@ -2,27 +2,27 @@
   "version": "2.0.0",
   "tasks": [
     {
-      "label": "Longbridge backtest",
+      "label": "Portfolio backtest",
       "type": "shell",
       "command": "python backtest.py",
       "problemMatcher": []
     },
     {
-      "label": "Longbridge backtest refresh",
+      "label": "Portfolio backtest refresh",
       "type": "shell",
-      "command": "python backtest.py --lb-refresh",
+      "command": "python backtest.py --refresh",
       "problemMatcher": []
     },
     {
-      "label": "Longbridge parameter sweep",
+      "label": "Portfolio example 50-30-20",
       "type": "shell",
-      "command": "python longbridge_dual_sweep2.py",
+      "command": "python backtest.py --portfolio \"515450.SH:0.5,513130.SH:0.3,510300.SH:0.2\" --monthly 6000 --rebalance-months 6",
       "problemMatcher": []
     },
     {
-      "label": "Longbridge parameter sweep (MP)",
+      "label": "Run unit tests",
       "type": "shell",
-      "command": "python longbridge_dual_sweep2_mp.py",
+      "command": "python -m unittest -v test_backtest.py",
       "problemMatcher": []
     }
   ]
