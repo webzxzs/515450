@@ -54,7 +54,11 @@ def build_walk_forward_windows(
     min_train_days: int = 400,
     min_test_days: int = 40,
 ) -> list[WalkForwardWindow]:
-    """Create chronological train->test windows with no overlap/leakage."""
+    """Create chronological train->test windows with no overlap/leakage.
+
+    The last partial test window is excluded by default. A requested 12-month
+    OOS window must have data reaching to within one week of its full horizon.
+    """
     if train_years <= 0:
         raise ValueError("train_years must be > 0")
     if test_months <= 0:
@@ -77,6 +81,9 @@ def build_walk_forward_windows(
             break
         test_start = pd.Timestamp(data.loc[test_candidates[0], "date"])
         target_test_end_exclusive = test_start + pd.DateOffset(months=test_months)
+        # Do not quietly mix a short final stub into full-horizon OOS windows.
+        if last_date < target_test_end_exclusive - pd.Timedelta(days=7):
+            break
         train_start_target = test_start - pd.DateOffset(years=train_years)
 
         train = data[(data["date"] >= train_start_target) & (data["date"] < test_start)].copy()
@@ -100,7 +107,7 @@ def build_walk_forward_windows(
 
     if not windows:
         raise ValueError(
-            "No valid walk-forward windows. Need more common history or shorter training/test periods."
+            "No valid full walk-forward windows. Need more common history or shorter training/test periods."
         )
     return windows
 
@@ -294,10 +301,7 @@ def main() -> None:
         test_months=args.test_months,
     )
 
-    default_weights = {
-        symbol: weight
-        for symbol, weight in zip(symbols, [1.0 / len(symbols)] * len(symbols))
-    }
+    equal_weights = {symbol: 1.0 / len(symbols) for symbol in symbols}
     # Current config is equal weight today, but keep these concepts separate so
     # future config changes still compare both a neutral equal-weight benchmark
     # and the then-current default allocation.
@@ -345,7 +349,7 @@ def main() -> None:
         equal_result = run_strategy(
             window.test,
             _strategy_config(
-                default_weights,
+                equal_weights,
                 monthly=args.monthly,
                 rebalance_months=args.rebalance_months,
                 commission=args.commission,
