@@ -30,6 +30,7 @@ weight_sweep_*.csv
 walk_forward_*.csv
 risk_*.csv
 adjustment_*.csv
+adaptive_*.csv
 
 # Longbridge cache lives outside the repository; ignore accidental snapshots
 *_actual.csv
