@@ -1,16 +1,15 @@
 #!/usr/bin/env python3
-"""Longbridge market-data adapter for the 515450 backtest project.
+"""Longbridge market-data adapter for the ETF portfolio backtest.
 
-Design goals:
-- Keep the legacy AkShare/HFQ files untouched.
-- Pull official Longbridge historical K-lines through the authenticated CLI.
-- Cache normalized OHLCV data outside the repository.
-- Fetch in calendar-year chunks so long histories do not depend on a single
-  <=1000-candle response.
-- Make price adjustment explicit: ``actual`` or ``forward``.
+Responsibilities:
+- Pull authenticated Longbridge historical daily K-lines through the CLI.
+- Normalize output to ``date/open/high/low/close/volume/amount``.
+- Cache market data outside the repository.
+- Fetch long histories in calendar-year chunks.
+- Keep adjustment mode explicit: ``actual`` or ``forward``.
 
-The Longbridge CLI is preferred because it reuses the OAuth token created by
-``longbridge auth login`` and does not require secrets in this repository.
+The Longbridge CLI reuses the user's existing OAuth login, so this repository
+never stores Longbridge credentials.
 """
 
 from __future__ import annotations
@@ -54,7 +53,7 @@ class CacheInfo:
 
 
 def resolve_symbol(symbol: str) -> str:
-    """Convert project codes to Longbridge ``ticker.region`` symbols."""
+    """Convert common project codes to Longbridge ``ticker.region`` symbols."""
     raw = str(symbol).strip().upper()
     if raw in SYMBOL_MAP:
         return SYMBOL_MAP[raw]
@@ -96,7 +95,7 @@ def _normalize_date(value, symbol: str) -> pd.Timestamp:
 
 
 def _extract_rows(payload) -> list[dict]:
-    """Accept the CLI's current JSON array and a few defensive wrapper shapes."""
+    """Accept the CLI's JSON array and defensive wrapper shapes."""
     if isinstance(payload, list):
         return payload
     if not isinstance(payload, dict):
@@ -208,11 +207,7 @@ def fetch_daily(
     *,
     adjust: str = "actual",
 ) -> pd.DataFrame:
-    """Fetch daily Longbridge candles for a date range.
-
-    ``adjust`` is deliberately limited to values Longbridge actually supports:
-    ``actual`` (unadjusted/tradeable historical prices) or ``forward``.
-    """
+    """Fetch daily Longbridge candles for a date range."""
     if adjust not in {"actual", "forward"}:
         raise ValueError("adjust must be 'actual' or 'forward'")
 
@@ -232,8 +227,7 @@ def fetch_daily(
         raise LongbridgeDataError(f"Longbridge returned no daily data for {lb_symbol}")
 
     out = pd.concat(frames, ignore_index=True)
-    out = out.drop_duplicates("date", keep="last").sort_values("date").reset_index(drop=True)
-    return out
+    return out.drop_duplicates("date", keep="last").sort_values("date").reset_index(drop=True)
 
 
 def _read_cache(path: Path) -> pd.DataFrame:
@@ -274,8 +268,7 @@ def load_daily_data(
         cache_end = cached["date"].iloc[-1].date()
         if requested_start < cache_start:
             fetch_ranges.append((requested_start, cache_start - timedelta(days=1)))
-        # Seven calendar days tolerates weekends and normal exchange holidays.
-        if requested_end > cache_end and (requested_end - cache_end).days > 0:
+        if requested_end > cache_end:
             fetch_ranges.append((cache_end + timedelta(days=1), requested_end))
 
     frames = [cached] if cached is not None and not cached.empty else []
@@ -294,7 +287,10 @@ def load_daily_data(
     )
     merged.to_csv(info.path, index=False)
 
-    mask = (merged["date"].dt.date >= requested_start) & (merged["date"].dt.date <= requested_end)
+    mask = (
+        (merged["date"].dt.date >= requested_start)
+        & (merged["date"].dt.date <= requested_end)
+    )
     result = merged.loc[mask].reset_index(drop=True)
     if result.empty:
         raise LongbridgeDataError(
