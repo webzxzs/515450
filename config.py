@@ -10,13 +10,11 @@ REBALANCE_MONTHS = 3
 START_DATE = "2020-01-01"
 
 # Price basis
-# Research/optimization should compare total-return-like histories, so the
-# shared research default is Longbridge forward-adjusted prices. Longbridge
-# documents forward adjustment as accounting for splits/dividends.
+# Longbridge documents forward adjustment as accounting for splits/dividends.
+# The project therefore defaults to forward-adjusted prices for long-horizon
+# return research. Use `--adjust actual` when you want an unadjusted execution-
+# price sensitivity check for lot sizing / fees / raw market-price behavior.
 PRICE_ADJUST = "forward"
-# The executable ledger uses unadjusted market prices so lot sizing, fees, and
-# cash affordability are not calculated from synthetic adjusted prices.
-EXECUTION_PRICE_ADJUST = "actual"
 
 # Trading costs
 COMMISSION = 0.000087
