@@ -51,6 +51,44 @@ class AdaptiveStrategyTests(unittest.TestCase):
         self.assertGreater(underweight_b, target_b)
         self.assertTrue((underweight.trades["side"] == "BUY").all())
 
+    def test_zero_weight_sleeve_is_valid_for_research(self):
+        prices = pd.DataFrame(
+            {
+                "date": pd.to_datetime(["2024-01-02", "2024-02-01", "2024-03-01"]),
+                "A": [10.0, 10.0, 10.0],
+                "B": [10.0, 10.0, 10.0],
+                "GOLD": [20.0, 20.0, 20.0],
+            }
+        )
+        result = run_adaptive_strategy(
+            prices,
+            self._config(
+                weights={"A": 0.5, "B": 0.5, "GOLD": 0.0},
+                lot_sizes={"A": 1, "B": 1, "GOLD": 1},
+            ),
+        )
+        self.assertEqual(int(result.summary["ending_shares_GOLD"]), 0)
+        if not result.trades.empty:
+            self.assertFalse((result.trades["symbol"] == "GOLD").any())
+
+    def test_untradable_sleeve_is_not_bought_on_that_date(self):
+        prices = pd.DataFrame(
+            {
+                "date": pd.to_datetime(["2024-01-02", "2024-02-01"]),
+                "A": [10.0, 10.0],
+                "B": [10.0, 10.0],
+                "tradable_A": [True, True],
+                "tradable_B": [False, True],
+            }
+        )
+        result = run_adaptive_strategy(
+            prices,
+            self._config(contribution_mode="target"),
+        )
+        jan = result.trades[result.trades["date"] == pd.Timestamp("2024-01-02")]
+        self.assertTrue((jan["symbol"] == "A").any())
+        self.assertFalse((jan["symbol"] == "B").any())
+
     def test_threshold_rebalance_fires_only_when_drift_is_large_enough(self):
         prices = self._prices()
         tight = run_adaptive_strategy(
