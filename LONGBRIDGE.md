@@ -28,16 +28,18 @@ BACKTEST_LONGBRIDGE_CACHE=/your/cache/path
 
 ## 价格口径
 
-默认：
-
-```bash
-python backtest.py --adjust actual
-```
-
-也支持前复权敏感性测试：
+长期组合研究默认使用前复权：
 
 ```bash
 python backtest.py --adjust forward
+```
+
+这也是 `config.PRICE_ADJUST` 当前默认值。
+
+如需检查原始市场价格、整手和手续费敏感性：
+
+```bash
+python backtest.py --adjust actual
 ```
 
 强制刷新缓存：
@@ -48,14 +50,17 @@ python backtest.py --refresh
 
 ## 默认标的代码
 
-Longbridge 使用 `CODE.MARKET`，当前默认组合为：
+Longbridge 使用 `CODE.MARKET`，当前默认 ETF universe 为：
 
 ```text
 513180.SH
 515450.SH
 513300.SH
 159783.SZ
+518850.SH
 ```
+
+其中 `518850.SH` 为华夏黄金ETF。Longbridge 当前可正常返回该标的行情。
 
 CLI 也接受常见沪深纯数字代码，项目会自动补 `.SH` / `.SZ`。
 
