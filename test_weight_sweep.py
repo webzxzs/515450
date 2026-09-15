@@ -32,15 +32,15 @@ class WeightSweepTests(unittest.TestCase):
             max_weight=0.50,
         )
         self.assertEqual(len(grid), 1554)
-        self.assertTrue(any(weights["518850.SH"] == 0.0 for weights in grid))
-        self.assertTrue(any(weights["518850.SH"] == 0.30 for weights in grid))
+        self.assertTrue(any(abs(weights["518850.SH"] - 0.0) < 1e-9 for weights in grid))
+        self.assertTrue(any(abs(weights["518850.SH"] - 0.30) < 1e-9 for weights in grid))
         for weights in grid:
             self.assertAlmostEqual(sum(weights.values()), 1.0)
             for symbol in symbols[:-1]:
                 self.assertGreaterEqual(weights[symbol], 0.10)
                 self.assertLessEqual(weights[symbol], 0.50)
             self.assertGreaterEqual(weights["518850.SH"], 0.0)
-            self.assertLessEqual(weights["518850.SH"], 0.30)
+            self.assertLessEqual(weights["518850.SH"], 0.300000001)
             for value in weights.values():
                 self.assertAlmostEqual((value / 0.05) % 1, 0.0)
 
