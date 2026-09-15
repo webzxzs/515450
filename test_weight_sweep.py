@@ -6,21 +6,32 @@ import pandas as pd
 
 from weight_sweep import (
     consensus_candidate,
+    default_symbols,
     generate_weight_grid,
     rank_results,
 )
 
 
 class WeightSweepTests(unittest.TestCase):
-    def test_default_four_asset_grid_is_bounded_and_sums_to_one(self):
-        symbols = ["513180.SH", "515450.SH", "513300.SH", "159783.SZ"]
+    def test_default_five_asset_grid_is_bounded_and_sums_to_one(self):
+        symbols = default_symbols()
+        self.assertEqual(
+            symbols,
+            [
+                "513180.SH",
+                "515450.SH",
+                "513300.SH",
+                "159783.SZ",
+                "518850.SH",
+            ],
+        )
         grid = generate_weight_grid(
             symbols,
             step=0.05,
             min_weight=0.10,
             max_weight=0.50,
         )
-        self.assertEqual(len(grid), 375)
+        self.assertEqual(len(grid), 976)
         for weights in grid:
             self.assertAlmostEqual(sum(weights.values()), 1.0)
             for value in weights.values():

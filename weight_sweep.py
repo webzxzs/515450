@@ -235,7 +235,6 @@ def rank_results(results: pd.DataFrame) -> pd.DataFrame:
 def consensus_candidate(ranked: pd.DataFrame, symbols: list[str], top_n: int = 20) -> tuple[pd.Series, dict[str, float]]:
     """Find the actual grid candidate closest to the center of the top region."""
     top = ranked.head(max(1, min(top_n, len(ranked))))
-    cols = [f"weight_{symbol}" for symbol in symbols]
     center = {symbol: float(top[f"weight_{symbol}"].mean()) for symbol in symbols}
 
     distance = pd.Series(0.0, index=top.index)
@@ -254,7 +253,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--symbols",
         default=",".join(default_symbols()),
-        help="逗号分隔 ETF 列表；默认读取 config.DEFAULT_PORTFOLIO 的四只 ETF",
+        help="逗号分隔 ETF 列表；默认读取 config.DEFAULT_PORTFOLIO 的当前 ETF universe",
     )
     parser.add_argument("--step", type=float, default=0.05, help="权重步长，默认 5%%")
     parser.add_argument("--min-weight", type=float, default=0.10, help="单只最低权重")

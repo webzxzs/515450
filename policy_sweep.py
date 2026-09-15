@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
 """Jointly explore ETF target weights and execution policies.
 
-25/25/25/25 is never used as a search center. With the default 5% grid the
-script evaluates all 375 bounded weight combinations under every policy.
+The equal-weight portfolio is never used as a search center. With the current
+five-ETF universe, default 5% step, and 10%-50% bounds, the script evaluates
+976 bounded weight combinations under every policy.
 
 To keep runtime practical without letting one rebalance style pre-filter the
 weights for every other style, the search is two-stage:
@@ -481,7 +482,10 @@ def main() -> None:
         f"最常见规则: {r['most_common_policy']} "
         f"({float(r['most_common_policy_share']):.0%})"
     )
-    print("\n25/25/25/25 只是完整网格中的普通 benchmark 行，不参与设定搜索中心。")
+    print(
+        f"\n等权 benchmark = {equal_weight:.0%} × {len(symbols)}；"
+        "只是完整网格中的普通候选，不参与设定搜索中心。"
+    )
 
 
 if __name__ == "__main__":
