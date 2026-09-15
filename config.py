@@ -1,10 +1,15 @@
 #!/usr/bin/env python3
 """Default configuration for the Longbridge ETF portfolio backtest."""
 
-# Baseline portfolio for quick runs only. 25/25/25/25 is NOT a recommended or
+# Baseline portfolio for quick runs only. Equal weight is NOT a recommended or
 # assumed optimum; weight_sweep.py / policy_sweep.py are responsible for
 # discovering robust allocations from the configured ETF universe.
-DEFAULT_PORTFOLIO = "513180.SH:0.25,515450.SH:0.25,513300.SH:0.25,159783.SZ:0.25"
+#
+# 518850.SH = 华夏黄金ETF. Gold is included as a distinct defensive / real-asset
+# sleeve; its long-term target weight must be discovered by the research layer.
+DEFAULT_PORTFOLIO = (
+    "513180.SH:0.20,515450.SH:0.20,513300.SH:0.20,159783.SZ:0.20,518850.SH:0.20"
+)
 
 # Strategy cadence
 MONTHLY_CONTRIBUTION = 5000.0
