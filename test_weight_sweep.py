@@ -13,7 +13,7 @@ from weight_sweep import (
 
 
 class WeightSweepTests(unittest.TestCase):
-    def test_default_five_asset_grid_is_bounded_and_sums_to_one(self):
+    def test_default_five_asset_grid_uses_gold_override(self):
         symbols = default_symbols()
         self.assertEqual(
             symbols,
@@ -31,13 +31,32 @@ class WeightSweepTests(unittest.TestCase):
             min_weight=0.10,
             max_weight=0.50,
         )
-        self.assertEqual(len(grid), 976)
+        self.assertEqual(len(grid), 1554)
+        self.assertTrue(any(weights["518850.SH"] == 0.0 for weights in grid))
+        self.assertTrue(any(weights["518850.SH"] == 0.30 for weights in grid))
         for weights in grid:
             self.assertAlmostEqual(sum(weights.values()), 1.0)
+            for symbol in symbols[:-1]:
+                self.assertGreaterEqual(weights[symbol], 0.10)
+                self.assertLessEqual(weights[symbol], 0.50)
+            self.assertGreaterEqual(weights["518850.SH"], 0.0)
+            self.assertLessEqual(weights["518850.SH"], 0.30)
             for value in weights.values():
-                self.assertGreaterEqual(value, 0.10)
-                self.assertLessEqual(value, 0.50)
                 self.assertAlmostEqual((value / 0.05) % 1, 0.0)
+
+    def test_explicit_symbol_bounds_override_defaults(self):
+        grid = generate_weight_grid(
+            ["A", "B", "C"],
+            step=0.10,
+            min_weight=0.10,
+            max_weight=0.80,
+            symbol_bounds={"A": (0.0, 0.2), "B": (0.2, 0.8), "C": (0.1, 0.8)},
+        )
+        self.assertTrue(grid)
+        for weights in grid:
+            self.assertLessEqual(weights["A"], 0.2)
+            self.assertGreaterEqual(weights["B"], 0.2)
+            self.assertAlmostEqual(sum(weights.values()), 1.0)
 
     def test_invalid_step_is_rejected(self):
         with self.assertRaises(ValueError):
