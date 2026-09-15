@@ -62,18 +62,43 @@ def default_symbols() -> list[str]:
     return list(parse_portfolio(cfg.DEFAULT_PORTFOLIO))
 
 
+def effective_weight_bounds(
+    symbols: Iterable[str],
+    *,
+    min_weight: float,
+    max_weight: float,
+) -> dict[str, tuple[float, float]]:
+    """Resolve per-symbol bounds using config overrides plus global fallback."""
+    if not (0 <= min_weight <= max_weight <= 1):
+        raise ValueError("require 0 <= min_weight <= max_weight <= 1")
+
+    configured = getattr(cfg, "WEIGHT_BOUNDS", {})
+    bounds: dict[str, tuple[float, float]] = {}
+    for symbol in symbols:
+        lo, hi = configured.get(symbol, (min_weight, max_weight))
+        lo = float(lo)
+        hi = float(hi)
+        if not (0 <= lo <= hi <= 1):
+            raise ValueError(f"Invalid weight bounds for {symbol}: {(lo, hi)}")
+        bounds[symbol] = (lo, hi)
+    return bounds
+
+
 def generate_weight_grid(
     symbols: Iterable[str],
     *,
     step: float = 0.05,
     min_weight: float = 0.10,
     max_weight: float = 0.50,
+    symbol_bounds: dict[str, tuple[float, float]] | None = None,
 ) -> list[dict[str, float]]:
-    """Enumerate all bounded weight combinations that sum exactly to 100%.
+    """Enumerate bounded weight combinations that sum exactly to 100%.
 
-    ``step`` must divide 1.0 exactly within floating-point tolerance.  The
-    default 5% step with 10%-50% bounds yields a compact search that is broad
-    enough to expose stable regions without pretending 1% precision is real.
+    ``min_weight`` / ``max_weight`` provide the fallback bounds. Per-symbol
+    bounds can override them, and by default configured overrides from
+    ``config.WEIGHT_BOUNDS`` are applied. This lets the research ask whether a
+    sleeve such as gold should be 0% without forcing the same floor on every
+    other asset.
     """
     symbols = list(symbols)
     if len(symbols) < 2:
@@ -83,21 +108,41 @@ def generate_weight_grid(
     units_total = round(1.0 / step)
     if not math.isclose(units_total * step, 1.0, abs_tol=1e-9):
         raise ValueError("step must divide 1.0 exactly, e.g. 0.10, 0.05, 0.025")
-    if not (0 <= min_weight <= max_weight <= 1):
-        raise ValueError("require 0 <= min_weight <= max_weight <= 1")
 
-    min_units = int(math.ceil(min_weight / step - 1e-9))
-    max_units = int(math.floor(max_weight / step + 1e-9))
-    if len(symbols) * min_units > units_total:
-        raise ValueError("min_weight is too high for the number of symbols")
-    if len(symbols) * max_units < units_total:
-        raise ValueError("max_weight is too low for the number of symbols")
+    bounds = (
+        effective_weight_bounds(symbols, min_weight=min_weight, max_weight=max_weight)
+        if symbol_bounds is None
+        else {symbol: tuple(symbol_bounds.get(symbol, (min_weight, max_weight))) for symbol in symbols}
+    )
 
-    choices = range(min_units, max_units + 1)
+    unit_bounds: dict[str, tuple[int, int]] = {}
+    for symbol in symbols:
+        lo, hi = (float(v) for v in bounds[symbol])
+        if not (0 <= lo <= hi <= 1):
+            raise ValueError(f"Invalid weight bounds for {symbol}: {(lo, hi)}")
+        min_units = int(math.ceil(lo / step - 1e-9))
+        max_units = int(math.floor(hi / step + 1e-9))
+        if min_units > max_units:
+            raise ValueError(f"No grid point fits bounds for {symbol}: {(lo, hi)}")
+        unit_bounds[symbol] = (min_units, max_units)
+
+    if sum(lo for lo, _ in unit_bounds.values()) > units_total:
+        raise ValueError("minimum weights are too high for the selected symbols")
+    if sum(hi for _, hi in unit_bounds.values()) < units_total:
+        raise ValueError("maximum weights are too low for the selected symbols")
+
+    head_symbols = symbols[:-1]
+    head_choices = [
+        range(unit_bounds[symbol][0], unit_bounds[symbol][1] + 1)
+        for symbol in head_symbols
+    ]
+    last_symbol = symbols[-1]
+    last_min, last_max = unit_bounds[last_symbol]
+
     out: list[dict[str, float]] = []
-    for head in itertools.product(choices, repeat=len(symbols) - 1):
+    for head in itertools.product(*head_choices):
         last = units_total - sum(head)
-        if last < min_units or last > max_units:
+        if last < last_min or last > last_max:
             continue
         units = (*head, last)
         weights = {symbol: unit * step for symbol, unit in zip(symbols, units)}
@@ -256,8 +301,8 @@ def build_parser() -> argparse.ArgumentParser:
         help="逗号分隔 ETF 列表；默认读取 config.DEFAULT_PORTFOLIO 的当前 ETF universe",
     )
     parser.add_argument("--step", type=float, default=0.05, help="权重步长，默认 5%%")
-    parser.add_argument("--min-weight", type=float, default=0.10, help="单只最低权重")
-    parser.add_argument("--max-weight", type=float, default=0.50, help="单只最高权重")
+    parser.add_argument("--min-weight", type=float, default=0.10, help="未单独配置标的的最低权重")
+    parser.add_argument("--max-weight", type=float, default=0.50, help="未单独配置标的的最高权重")
     parser.add_argument("--folds", type=int, default=3, help="时间稳定性分段数")
     parser.add_argument("--top", type=int, default=20, help="输出前 N 个候选")
     parser.add_argument("--monthly", type=float, default=cfg.MONTHLY_CONTRIBUTION)
@@ -282,11 +327,17 @@ def main() -> None:
     if args.top <= 0:
         raise ValueError("--top must be > 0")
 
+    bounds = effective_weight_bounds(
+        symbols,
+        min_weight=args.min_weight,
+        max_weight=args.max_weight,
+    )
     candidates = generate_weight_grid(
         symbols,
         step=args.step,
         min_weight=args.min_weight,
         max_weight=args.max_weight,
+        symbol_bounds=bounds,
     )
     lot_sizes = parse_lot_sizes(args.lot_sizes, symbols)
     prices = load_price_table(
@@ -298,10 +349,11 @@ def main() -> None:
     )
     folds = chronological_folds(prices, args.folds)
 
-    print(
-        f"搜索 {len(candidates)} 组权重 | step={args.step:.1%} | "
-        f"每只 {args.min_weight:.0%}~{args.max_weight:.0%} | folds={args.folds}"
-    )
+    print(f"搜索 {len(candidates)} 组权重 | step={args.step:.1%} | folds={args.folds}")
+    print("权重边界:")
+    for symbol in symbols:
+        lo, hi = bounds[symbol]
+        print(f"  {symbol}: {lo:.0%}~{hi:.0%}")
     print(
         f"共同数据区间: {prices['date'].iloc[0].date()} ~ "
         f"{prices['date'].iloc[-1].date()} ({len(prices)} 天)"
