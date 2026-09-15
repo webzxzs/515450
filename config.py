@@ -11,6 +11,14 @@ DEFAULT_PORTFOLIO = (
     "513180.SH:0.20,515450.SH:0.20,513300.SH:0.20,159783.SZ:0.20,518850.SH:0.20"
 )
 
+# Default research bounds. Symbols omitted here fall back to the CLI/global
+# min/max used by weight_sweep.py and policy_sweep.py. Gold is deliberately
+# allowed to reach 0% so the research can test whether it is needed at all,
+# rather than forcing a minimum allocation by construction.
+WEIGHT_BOUNDS = {
+    "518850.SH": (0.00, 0.30),
+}
+
 # Strategy cadence
 MONTHLY_CONTRIBUTION = 5000.0
 REBALANCE_MONTHS = 3

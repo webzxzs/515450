@@ -3,15 +3,15 @@
 
 Strategy
 --------
-1. Contribute a fixed amount on the first common trading day of every month.
+1. Contribute a fixed amount on the first portfolio valuation day of every month.
 2. In normal months, invest that month's contribution by target weights.
 3. Every N contribution months, rebalance the whole portfolio back to target
    weights (sell overweight positions first, then buy underweight positions).
 4. Respect market lot sizes and commissions; unused cash remains in the account.
 
-The engine is intentionally price-source agnostic after loading: it only needs
-an aligned daily close-price table. Longbridge is the canonical source used by
-``main()``.
+The engine is intentionally price-source agnostic after loading. Price tables may
+include ``tradable_<SYMBOL>`` flags: valuation uses forward-filled closes while
+orders are blocked on dates where that symbol did not publish a close.
 """
 
 from __future__ import annotations
@@ -105,6 +105,10 @@ def parse_lot_sizes(spec: str, symbols: Iterable[str]) -> dict[str, int]:
     return result
 
 
+def tradable_column(symbol: str) -> str:
+    return f"tradable_{symbol}"
+
+
 def load_price_table(
     symbols: Iterable[str],
     *,
@@ -113,26 +117,34 @@ def load_price_table(
     adjust: str,
     refresh: bool,
 ) -> pd.DataFrame:
-    """Load daily closes and keep only dates tradable by every portfolio ETF."""
+    """Load aligned closes without deleting a day because one ETF is unavailable.
+
+    All observed dates are outer-joined. A symbol's last close is forward-filled
+    for valuation after its first observation, while ``tradable_<SYMBOL>`` marks
+    whether that symbol actually had a close on that date. Rows before every
+    portfolio symbol has at least one known price are excluded.
+    """
+    symbols = list(symbols)
     merged: pd.DataFrame | None = None
     for symbol in symbols:
         df = load_daily_data(symbol, start=start, end=end, adjust=adjust, refresh=refresh)
         part = df[["date", "close"]].copy().rename(columns={"close": symbol})
-        merged = part if merged is None else pd.merge(merged, part, on="date", how="inner")
+        part["date"] = pd.to_datetime(part["date"])
+        part = part.drop_duplicates("date", keep="last")
+        merged = part if merged is None else pd.merge(merged, part, on="date", how="outer")
 
     if merged is None or merged.empty:
-        raise ValueError("No overlapping trading dates across portfolio ETFs")
+        raise ValueError("No price history for portfolio ETFs")
 
-    price_cols = [c for c in merged.columns if c != "date"]
-    merged[price_cols] = merged[price_cols].apply(pd.to_numeric, errors="coerce")
-    merged = (
-        merged.dropna(subset=price_cols)
-        .drop_duplicates("date", keep="last")
-        .sort_values("date")
-        .reset_index(drop=True)
-    )
+    merged = merged.sort_values("date").drop_duplicates("date", keep="last").reset_index(drop=True)
+    for symbol in symbols:
+        merged[symbol] = pd.to_numeric(merged[symbol], errors="coerce")
+        merged[tradable_column(symbol)] = merged[symbol].notna()
+        merged[symbol] = merged[symbol].ffill()
+
+    merged = merged.dropna(subset=symbols).reset_index(drop=True)
     if len(merged) < 2:
-        raise ValueError("Not enough overlapping price history to backtest")
+        raise ValueError("Not enough overlapping initialized price history to backtest")
     return merged
 
 
@@ -210,6 +222,10 @@ def run_strategy(prices: pd.DataFrame, scfg: StrategyConfig) -> BacktestResult:
         raise ValueError("Strategy requires at least two ETFs")
     if abs(sum(scfg.weights.values()) - 1.0) > 1e-6:
         raise ValueError("Strategy weights must sum to 1")
+    if any(weight < 0 for weight in scfg.weights.values()):
+        raise ValueError("Strategy weights must be >= 0")
+    if sum(weight > 0 for weight in scfg.weights.values()) < 2:
+        raise ValueError("Strategy requires at least two positive target weights")
     if scfg.monthly_contribution <= 0:
         raise ValueError("monthly_contribution must be > 0")
     if scfg.rebalance_months < 0:
@@ -232,6 +248,10 @@ def run_strategy(prices: pd.DataFrame, scfg: StrategyConfig) -> BacktestResult:
     previous_month: str | None = None
     previous_value: float | None = None
     nav = 1.0
+
+    def is_tradable(row: pd.Series, symbol: str) -> bool:
+        col = tradable_column(symbol)
+        return bool(row[col]) if col in row.index else True
 
     def position_value(row: pd.Series, symbol: str) -> float:
         return shares[symbol] * float(row[symbol])
@@ -264,6 +284,8 @@ def run_strategy(prices: pd.DataFrame, scfg: StrategyConfig) -> BacktestResult:
 
     def buy(ts: pd.Timestamp, row: pd.Series, symbol: str, desired_shares: int, reason: str) -> int:
         nonlocal cash
+        if not is_tradable(row, symbol):
+            return 0
         price = float(row[symbol])
         lot = scfg.lot_sizes[symbol]
         desired_shares = _round_down_shares(desired_shares, lot)
@@ -286,6 +308,8 @@ def run_strategy(prices: pd.DataFrame, scfg: StrategyConfig) -> BacktestResult:
 
     def sell(ts: pd.Timestamp, row: pd.Series, symbol: str, desired_shares: int, reason: str) -> int:
         nonlocal cash
+        if not is_tradable(row, symbol):
+            return 0
         lot = scfg.lot_sizes[symbol]
         qty = min(_round_down_shares(desired_shares, lot), shares[symbol])
         if qty <= 0:
@@ -301,9 +325,9 @@ def run_strategy(prices: pd.DataFrame, scfg: StrategyConfig) -> BacktestResult:
         return qty
 
     def invest_contribution(ts: pd.Timestamp, row: pd.Series):
-        # Allocate only the new monthly contribution by target weights. Residual
-        # cash from lot rounding is deliberately retained for future months.
         for symbol, weight in scfg.weights.items():
+            if weight <= 0:
+                continue
             budget = scfg.monthly_contribution * weight
             price = float(row[symbol])
             lot = scfg.lot_sizes[symbol]
@@ -320,7 +344,6 @@ def run_strategy(prices: pd.DataFrame, scfg: StrategyConfig) -> BacktestResult:
             for symbol in symbols
         }
 
-        # Sell first so buys never require external leverage.
         for symbol in symbols:
             excess = shares[symbol] - desired_shares[symbol]
             if excess > 0:
@@ -559,7 +582,7 @@ def main() -> None:
     else:
         print(f"每月定投: ¥{args.monthly:,.2f} | 不再平衡")
     print(
-        f"共同交易区间: {prices['date'].iloc[0].date()} ~ "
+        f"估值数据区间: {prices['date'].iloc[0].date()} ~ "
         f"{prices['date'].iloc[-1].date()} ({len(prices)} 天)"
     )
 

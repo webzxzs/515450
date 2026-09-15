@@ -1,8 +1,9 @@
 import unittest
+from unittest.mock import patch
 
 import pandas as pd
 
-from backtest import StrategyConfig, parse_portfolio, run_strategy
+from backtest import StrategyConfig, load_price_table, parse_portfolio, run_strategy
 
 
 class PortfolioStrategyTests(unittest.TestCase):
@@ -11,6 +12,60 @@ class PortfolioStrategyTests(unittest.TestCase):
         self.assertAlmostEqual(weights["515450.SH"], 0.8)
         self.assertAlmostEqual(weights["513130.SH"], 0.2)
         self.assertAlmostEqual(sum(weights.values()), 1.0)
+
+    def test_price_loader_forward_fills_valuation_but_marks_untradable(self):
+        aaa = pd.DataFrame(
+            {
+                "date": pd.to_datetime(["2026-01-02", "2026-01-05", "2026-01-06"]),
+                "close": [10.0, 11.0, 12.0],
+            }
+        )
+        bbb = pd.DataFrame(
+            {
+                "date": pd.to_datetime(["2026-01-02", "2026-01-06"]),
+                "close": [20.0, 22.0],
+            }
+        )
+
+        def fake_load(symbol, **kwargs):
+            return aaa.copy() if symbol == "AAA.SH" else bbb.copy()
+
+        with patch("backtest.load_daily_data", side_effect=fake_load):
+            prices = load_price_table(
+                ["AAA.SH", "BBB.SH"],
+                start="2026-01-01",
+                end=None,
+                adjust="forward",
+                refresh=False,
+            )
+
+        jan5 = prices.loc[prices["date"] == pd.Timestamp("2026-01-05")].iloc[0]
+        self.assertEqual(float(jan5["BBB.SH"]), 20.0)
+        self.assertFalse(bool(jan5["tradable_BBB.SH"]))
+        self.assertTrue(bool(jan5["tradable_AAA.SH"]))
+
+    def test_strategy_does_not_trade_symbol_on_unavailable_date(self):
+        prices = pd.DataFrame(
+            {
+                "date": pd.to_datetime(["2026-01-02", "2026-02-02"]),
+                "AAA.SH": [10.0, 10.0],
+                "BBB.SH": [10.0, 10.0],
+                "tradable_AAA.SH": [True, True],
+                "tradable_BBB.SH": [False, True],
+            }
+        )
+        cfg = StrategyConfig(
+            weights={"AAA.SH": 0.5, "BBB.SH": 0.5},
+            monthly_contribution=1000,
+            rebalance_months=0,
+            commission_rate=0.0,
+            min_commission=0.0,
+            lot_sizes={"AAA.SH": 1, "BBB.SH": 1},
+        )
+        result = run_strategy(prices, cfg)
+        jan_trades = result.trades[result.trades["date"] == pd.Timestamp("2026-01-02")]
+        self.assertTrue((jan_trades["symbol"] == "AAA.SH").any())
+        self.assertFalse((jan_trades["symbol"] == "BBB.SH").any())
 
     def test_periodic_rebalance_generates_rebalance_trades(self):
         prices = pd.DataFrame(
