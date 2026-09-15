@@ -33,6 +33,7 @@ from backtest import (
     _max_affordable_shares,
     _round_down_shares,
     _xirr,
+    tradable_column,
 )
 
 
@@ -54,8 +55,10 @@ def _validate_config(scfg: AdaptiveStrategyConfig) -> None:
         raise ValueError("Strategy requires at least two ETFs")
     if abs(sum(scfg.weights.values()) - 1.0) > 1e-6:
         raise ValueError("Strategy weights must sum to 1")
-    if any(weight <= 0 for weight in scfg.weights.values()):
-        raise ValueError("Strategy weights must all be > 0")
+    if any(weight < 0 for weight in scfg.weights.values()):
+        raise ValueError("Strategy weights must all be >= 0")
+    if sum(weight > 0 for weight in scfg.weights.values()) < 2:
+        raise ValueError("Strategy requires at least two positive target weights")
     if scfg.monthly_contribution <= 0:
         raise ValueError("monthly_contribution must be > 0")
     if scfg.contribution_mode not in {"target", "underweight"}:
@@ -103,6 +106,10 @@ def run_adaptive_strategy(prices: pd.DataFrame, scfg: AdaptiveStrategyConfig) ->
     previous_month: str | None = None
     previous_value: float | None = None
     nav = 1.0
+
+    def is_tradable(row: pd.Series, symbol: str) -> bool:
+        col = tradable_column(symbol)
+        return bool(row[col]) if col in row.index else True
 
     def position_value(row: pd.Series, symbol: str) -> float:
         return shares[symbol] * float(row[symbol])
@@ -157,6 +164,8 @@ def run_adaptive_strategy(prices: pd.DataFrame, scfg: AdaptiveStrategyConfig) ->
         reason: str,
     ) -> int:
         nonlocal cash
+        if not is_tradable(row, symbol):
+            return 0
         price = float(row[symbol])
         lot = scfg.lot_sizes[symbol]
         desired_shares = _round_down_shares(desired_shares, lot)
@@ -185,6 +194,8 @@ def run_adaptive_strategy(prices: pd.DataFrame, scfg: AdaptiveStrategyConfig) ->
         reason: str,
     ) -> int:
         nonlocal cash
+        if not is_tradable(row, symbol):
+            return 0
         lot = scfg.lot_sizes[symbol]
         qty = min(_round_down_shares(desired_shares, lot), shares[symbol])
         if qty <= 0:
@@ -201,6 +212,8 @@ def run_adaptive_strategy(prices: pd.DataFrame, scfg: AdaptiveStrategyConfig) ->
 
     def invest_target(ts: pd.Timestamp, row: pd.Series) -> None:
         for symbol, weight in scfg.weights.items():
+            if weight <= 0:
+                continue
             budget = scfg.monthly_contribution * weight
             price = float(row[symbol])
             desired = _round_down_shares(budget / price, scfg.lot_sizes[symbol])
@@ -220,13 +233,11 @@ def run_adaptive_strategy(prices: pd.DataFrame, scfg: AdaptiveStrategyConfig) ->
             for symbol in symbols
         }
 
-        # Largest relative dollar deficit first. Recompute after every successful
-        # purchase because lot rounding can make the best next sleeve change.
         while cash > 1e-9:
             candidates: list[tuple[float, str, int]] = []
             for symbol in symbols:
                 shortfall = desired[symbol] - shares[symbol]
-                if shortfall <= 0:
+                if shortfall <= 0 or not is_tradable(row, symbol):
                     continue
                 deficit_value = shortfall * float(row[symbol])
                 target_value = max(targets[symbol], 1e-12)
