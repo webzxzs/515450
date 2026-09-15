@@ -38,9 +38,9 @@
       "problemMatcher": []
     },
     {
-      "label": "Portfolio example 30-30-20-20",
+      "label": "Portfolio example 25-25-20-15-15",
       "type": "shell",
-      "command": "python backtest.py --portfolio \"513180.SH:0.3,515450.SH:0.3,513300.SH:0.2,159783.SZ:0.2\" --monthly 6000 --rebalance-months 6",
+      "command": "python backtest.py --portfolio \"513180.SH:0.25,515450.SH:0.25,513300.SH:0.20,159783.SZ:0.15,518850.SH:0.15\" --monthly 6000 --rebalance-months 6",
       "problemMatcher": []
     },
     {
