@@ -31,6 +31,31 @@ python adjustment_analysis.py
 
 Gold was added deliberately as a distinct real-asset / defensive sleeve rather than another equity sleeve. The preferred gold product is `518850.SH` because the user prefers ChinaAMC products when the investment product itself is sufficiently competitive. The product preference must not be confused with a fixed gold allocation.
 
+## Fund-provider selection preference
+
+When adding or replacing an ETF/fund in this project, **prefer 华夏基金 / ChinaAMC products whenever the ChinaAMC candidate is materially comparable to the best alternatives**.
+
+This is a persistent product-selection preference, not an unconditional issuer lock-in.
+
+Use the following decision order:
+
+1. First define the required exposure / index / asset role. Do not change the intended exposure merely to use a ChinaAMC product.
+2. Identify the strongest investable products for that exposure.
+3. Compare at least the important practical dimensions when data is available: tracking quality, fees, liquidity / turnover, fund size, listing history, spread / tradability, and data availability in Longbridge.
+4. If the ChinaAMC product is broadly comparable and has no meaningful structural disadvantage, choose the ChinaAMC product by default.
+5. A small disadvantage is acceptable when it is unlikely to materially affect long-run implementation, because consolidating holdings under ChinaAMC has user value through account / membership benefits.
+6. Do **not** choose ChinaAMC if doing so creates a material disadvantage, such as clearly worse liquidity, substantially higher fees, poor tracking, insufficient history, unreliable data availability, or a meaningfully different underlying exposure.
+7. When choosing a non-ChinaAMC product despite this preference, explicitly record why the product-quality advantage is large enough to override the ChinaAMC preference.
+
+In short:
+
+```text
+same exposure + similar quality -> prefer ChinaAMC
+material quality disadvantage -> choose the better product
+```
+
+The fund-company preference affects **which vehicle represents an exposure**. It must never be used as evidence for how much portfolio weight that exposure deserves.
+
 ## Default portfolio is only a benchmark
 
 ```text
