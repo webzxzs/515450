@@ -2,13 +2,21 @@
 
 本项目只使用 Longbridge 作为正式行情源。
 
-## 登录
+## 环境准备
+
+Python 依赖：
+
+```bash
+python -m pip install -r requirements.txt
+```
 
 安装 Longbridge CLI 后完成授权：
 
 ```bash
 longbridge auth login
 ```
+
+Longbridge CLI 使用本机已有登录态；仓库不保存 Longbridge 凭据。
 
 ## 行情缓存
 
@@ -66,4 +74,23 @@ CLI 也接受常见沪深纯数字代码，项目会自动补 `.SH` / `.SZ`。
 
 ## 多 ETF 数据对齐
 
-回测会分别拉取组合内每只 ETF 的日线，然后取**所有 ETF 都有交易数据的日期交集**。因此实际回测起点会自动落在组合中最晚上市 ETF 有数据之后。
+组合数据不会因为某一只 ETF 某天缺少收盘价，就把整个日期从研究样本中删除。当前规则与 `backtest.py` / 项目 Skill 保持一致：
+
+```text
+所有标的观察日期取并集（outer join）
+↓
+每只 ETF 至少出现过一个真实价格后，才进入共同研究区间
+↓
+某 ETF 当天缺行情：估值使用上一有效收盘价
+↓
+同时将该 ETF 当天标记为不可交易
+↓
+其他当天有真实行情的 ETF 仍可正常交易
+```
+
+因此：
+
+- 组合估值日期保持连续，不会因为单一标的缺一天行情而整天消失；
+- 前值只用于估值，不会被当成当天真实成交价；
+- `tradable_<SYMBOL>` 标记控制该标的当天是否允许交易；
+- synthetic test 若没有 `tradable_*` 列，则按全部可交易处理，以兼容离线测试。
