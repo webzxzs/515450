@@ -22,6 +22,8 @@ from __future__ import annotations
 import argparse
 import itertools
 import math
+import multiprocessing as mp
+import os
 from pathlib import Path
 from typing import Iterable
 
@@ -229,6 +231,44 @@ def evaluate_weights(
     return row
 
 
+
+
+_WEIGHT_WORKER_CONTEXT: dict = {}
+
+
+def _init_weight_worker(
+    prices: pd.DataFrame,
+    folds: list[pd.DataFrame],
+    monthly: float,
+    rebalance_months: int,
+    commission: float,
+    min_commission: float,
+    lot_sizes: dict[str, int],
+) -> None:
+    global _WEIGHT_WORKER_CONTEXT
+    _WEIGHT_WORKER_CONTEXT = {
+        "prices": prices,
+        "folds": folds,
+        "monthly": monthly,
+        "rebalance_months": rebalance_months,
+        "commission": commission,
+        "min_commission": min_commission,
+        "lot_sizes": lot_sizes,
+    }
+
+
+def _evaluate_weight_worker(weights: dict[str, float]) -> dict:
+    c = _WEIGHT_WORKER_CONTEXT
+    return evaluate_weights(
+        c["prices"],
+        c["folds"],
+        weights,
+        monthly=c["monthly"],
+        rebalance_months=c["rebalance_months"],
+        commission=c["commission"],
+        min_commission=c["min_commission"],
+        lot_sizes=c["lot_sizes"],
+    )
 def _percentile_rank(series: pd.Series, *, higher_is_better: bool) -> pd.Series:
     values = pd.to_numeric(series, errors="coerce").replace([np.inf, -np.inf], np.nan)
     finite = values.dropna()
@@ -318,6 +358,12 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--commission", type=float, default=cfg.COMMISSION)
     parser.add_argument("--min-commission", type=float, default=cfg.MIN_COMMISSION)
     parser.add_argument("--lot-sizes", default="")
+    parser.add_argument(
+        "--workers",
+        type=int,
+        default=min(8, max(1, os.cpu_count() or 1)),
+        help="并行进程数；设为 1 可使用串行模式",
+    )
     return parser
 
 
@@ -330,6 +376,8 @@ def main() -> None:
         raise ValueError("--rebalance-months must be >= 0")
     if args.top <= 0:
         raise ValueError("--top must be > 0")
+    if args.workers <= 0:
+        raise ValueError("--workers must be > 0")
 
     bounds = effective_weight_bounds(
         symbols,
@@ -363,9 +411,9 @@ def main() -> None:
         f"{prices['date'].iloc[-1].date()} ({len(prices)} 天)"
     )
 
-    rows = []
-    for idx, weights in enumerate(candidates, start=1):
-        rows.append(
+    rows: list[dict] = []
+    if args.workers == 1:
+        iterator = (
             evaluate_weights(
                 prices,
                 folds,
@@ -376,9 +424,34 @@ def main() -> None:
                 min_commission=args.min_commission,
                 lot_sizes=lot_sizes,
             )
+            for weights in candidates
         )
-        if idx % 50 == 0 or idx == len(candidates):
-            print(f"  已完成 {idx}/{len(candidates)}")
+        for idx, row in enumerate(iterator, start=1):
+            rows.append(row)
+            if idx % 50 == 0 or idx == len(candidates):
+                print(f"  已完成 {idx}/{len(candidates)}")
+    else:
+        ctx = mp.get_context("spawn")
+        with ctx.Pool(
+            processes=args.workers,
+            initializer=_init_weight_worker,
+            initargs=(
+                prices,
+                folds,
+                args.monthly,
+                args.rebalance_months,
+                args.commission,
+                args.min_commission,
+                lot_sizes,
+            ),
+        ) as pool:
+            for idx, row in enumerate(
+                pool.imap(_evaluate_weight_worker, candidates, chunksize=4),
+                start=1,
+            ):
+                rows.append(row)
+                if idx % 50 == 0 or idx == len(candidates):
+                    print(f"  已完成 {idx}/{len(candidates)}")
 
     ranked = rank_results(pd.DataFrame(rows))
     top = ranked.head(min(args.top, len(ranked))).copy()

@@ -36,6 +36,7 @@ from backtest import (
     dividend_column,
     tradable_column,
 )
+from risk_free_data import annualized_excess_sharpe, annualized_excess_sharpe_from_daily
 
 
 @dataclass(frozen=True)
@@ -378,6 +379,9 @@ def run_adaptive_strategy(prices: pd.DataFrame, scfg: AdaptiveStrategyConfig) ->
             "twr_return": twr_return,
             "nav": nav,
         }
+        if "risk_free_daily" in row.index:
+            daily["risk_free_daily"] = float(row["risk_free_daily"])
+            daily["risk_free_annual"] = float(row["risk_free_annual"]) if "risk_free_annual" in row.index else float("nan")
         for symbol in symbols:
             daily[f"{symbol}_shares"] = shares[symbol]
             daily[f"{symbol}_value"] = position_value(row, symbol)
@@ -391,17 +395,24 @@ def run_adaptive_strategy(prices: pd.DataFrame, scfg: AdaptiveStrategyConfig) ->
     cashflows.append((pd.Timestamp(daily_df.iloc[-1]["date"]), final_value))
     xirr = _xirr(cashflows)
 
-    daily_returns = daily_df["twr_return"].replace([np.inf, -np.inf], np.nan).dropna()
-    daily_returns = daily_returns.iloc[1:] if len(daily_returns) > 1 else daily_returns
+    metric_cols = ["date", "twr_return"]
+    if "risk_free_daily" in daily_df.columns:
+        metric_cols.append("risk_free_daily")
+    daily_metrics = daily_df[metric_cols].replace([np.inf, -np.inf], np.nan).dropna()
+    daily_metrics = daily_metrics.iloc[1:] if len(daily_metrics) > 1 else daily_metrics
+    daily_returns = daily_metrics["twr_return"]
     years = max(
         (daily_df.iloc[-1]["date"] - daily_df.iloc[0]["date"]).days / 365.25,
         1 / 365.25,
     )
     ann_twr = float(daily_df.iloc[-1]["nav"] ** (1.0 / years) - 1.0)
     sharpe = (
-        float(daily_returns.mean() / daily_returns.std(ddof=1) * np.sqrt(242))
-        if len(daily_returns) > 30 and daily_returns.std(ddof=1) > 1e-12
-        else float("nan")
+        annualized_excess_sharpe_from_daily(
+            daily_returns,
+            daily_metrics["risk_free_daily"],
+        )
+        if "risk_free_daily" in daily_metrics.columns
+        else annualized_excess_sharpe(daily_returns, daily_metrics["date"])
     )
     nav_series = daily_df["nav"].astype(float)
     drawdown = nav_series / nav_series.cummax() - 1.0

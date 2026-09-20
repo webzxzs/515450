@@ -18,20 +18,17 @@
 
 ## 当前默认研究组合
 
-config.py 当前保存的是 2026-09-20 用最新 Longbridge 数据重新筛选后，
-最接近 Top 稳健区域中心的 5% 网格候选：
+config.py 当前保存的是 2026-09-20 在显式分红总收益、历史无风险利率 Sharpe 和完整 `policy_sweep` 下的联合第一名：
 
 ~~~text
 513180.SH  10%
-515450.SH  25%
-513300.SH  25%
-159783.SZ  15%
-518850.SH  25%
+515450.SH  15%
+513300.SH  35%
+159783.SZ  10%
+518850.SH  30%
 ~~~
 
-它不是“历史收益第一名”，而是刻意选择更接近 Top 区域中心的稳健候选。
-五等权仍作为中性 benchmark 保留在研究中。详细依据见
-PORTFOLIO_RESEARCH_2026-09-20.md。
+默认执行规则为**每月目标再平衡**。它是当前研究系统的样本内最佳可执行结论，不代表该精确比例已经被充分样本外证明；五等权仍作为中性 benchmark 保留。详细依据见 PORTFOLIO_RESEARCH_2026-09-20.md。
 
 ## 最终权重研究边界
 
@@ -135,6 +132,12 @@ python backtest.py --adjust actual
 
 `adjustment_analysis.py` 用于 actual / explicit total_return / Longbridge forward 三口径对账。
 
+## 6. Sharpe 使用历史无风险利率
+
+Sharpe 不再默认无风险利率为 0。项目维护 `risk_free.csv`，保存 **中债国债收益率曲线 1 年期**历史收益率；`update_risk_free.py` 通过 AKShare `bond_china_yield` 从中国债券信息网口径更新快照。
+
+每个 ETF 交易日只使用**当日或此前最近一个已公布**的 1 年期国债收益率，严格向后匹配，不使用未来数据。年化收益率按 242 个交易日换算成等效日收益，Sharpe 基于组合日收益减去对应日无风险收益后计算。
+
 ---
 
 # 数据对齐规则
@@ -177,6 +180,8 @@ python backtest.py --adjust actual
 | `adjustment_analysis.py` | actual vs forward 对账 |
 | `dividend_data.py` / `dividends.csv` | 显式 ETF 现金分红与总收益重建 |
 | `update_dividends.py` | AKShare 双数据源校验并更新分红快照 |
+| `risk_free_data.py` / `risk_free.csv` | 历史 1 年期中债国债无风险利率与 Sharpe 对齐 |
+| `update_risk_free.py` | 更新中债 1 年期国债收益率快照 |
 | `longbridge_data.py` | Longbridge 日 K 与缓存 |
 | `config.py` | ETF universe、研究边界和基础参数 |
 
@@ -299,7 +304,8 @@ GitHub Actions 只跑离线测试，不访问 Longbridge 账户。
 - Walk-Forward 无数据泄漏；
 - 风险贡献和 PCA；
 - actual / explicit total_return / forward 对账逻辑；
-- 现金分红总收益重建。
+- 现金分红总收益重建；
+- 历史无风险利率向后匹配与超额收益 Sharpe。
 
 ---
 

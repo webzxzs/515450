@@ -19,6 +19,8 @@ weights for every other style, the search is two-stage:
 from __future__ import annotations
 
 import argparse
+import multiprocessing as mp
+import os
 from collections import Counter
 from pathlib import Path
 
@@ -163,6 +165,47 @@ def evaluate_full(
     return row
 
 
+
+
+_POLICY_WORKER_CONTEXT: dict = {}
+
+
+def _init_policy_worker(
+    prices: pd.DataFrame,
+    monthly: float,
+    commission: float,
+    min_commission: float,
+    lot_sizes: dict[str, int],
+    symbols: list[str],
+) -> None:
+    global _POLICY_WORKER_CONTEXT
+    _POLICY_WORKER_CONTEXT = {
+        "prices": prices,
+        "monthly": monthly,
+        "commission": commission,
+        "min_commission": min_commission,
+        "lot_sizes": lot_sizes,
+        "symbols": symbols,
+    }
+
+
+def _evaluate_policy_worker(task: tuple[dict[str, float], dict[str, float | int | str]]) -> dict:
+    weights, policy = task
+    c = _POLICY_WORKER_CONTEXT
+    row = evaluate_full(
+        c["prices"],
+        weights,
+        policy,
+        monthly=c["monthly"],
+        commission=c["commission"],
+        min_commission=c["min_commission"],
+        lot_sizes=c["lot_sizes"],
+    )
+    equal_weight = 1.0 / len(c["symbols"])
+    row["is_equal_weight_benchmark"] = all(
+        abs(weights[symbol] - equal_weight) < 1e-9 for symbol in c["symbols"]
+    )
+    return row
 def screen_rank(results: pd.DataFrame) -> pd.DataFrame:
     """Full-history screen used only to choose fold-validation candidates."""
     ranked = results.copy()
@@ -363,6 +406,17 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--commission", type=float, default=cfg.COMMISSION)
     parser.add_argument("--min-commission", type=float, default=cfg.MIN_COMMISSION)
     parser.add_argument("--lot-sizes", default="")
+    parser.add_argument(
+        "--workers",
+        type=int,
+        default=min(8, max(1, os.cpu_count() or 1)),
+        help="阶段 1 完整联合筛选的并行进程数；设为 1 可串行运行",
+    )
+    parser.add_argument("--policy-start", type=int, default=0, help="阶段 1 规则切片起点（含）")
+    parser.add_argument("--policy-stop", type=int, default=None, help="阶段 1 规则切片终点（不含）")
+    parser.add_argument("--screen-only", action="store_true", help="只运行阶段 1 并写出 screen CSV")
+    parser.add_argument("--screen-output", default="adaptive_joint_screen.csv")
+    parser.add_argument("--screen-input", default="", help="跳过阶段 1，直接读取已有完整 screen CSV 进入阶段 2")
     return parser
 
 
@@ -370,11 +424,14 @@ def main() -> None:
     args = build_parser().parse_args()
     if args.screen_top_per_policy <= 0 or args.top <= 0:
         raise ValueError("--screen-top-per-policy and --top must be > 0")
+    if args.workers <= 0:
+        raise ValueError("--workers must be > 0")
 
     symbols = default_symbols()
+    equal_weight = 1.0 / len(symbols)
     periodic_months = _parse_int_list(args.periodic_months)
     thresholds = _parse_float_list(args.thresholds)
-    policies = build_policy_variants(periodic_months, thresholds)
+    all_policies = build_policy_variants(periodic_months, thresholds)
     weights_grid = generate_weight_grid(
         symbols,
         step=args.step,
@@ -391,38 +448,89 @@ def main() -> None:
     )
     folds = chronological_folds(prices, args.folds)
 
-    total_screen = len(weights_grid) * len(policies)
-    print(
-        f"阶段 1 完整联合筛选: {len(weights_grid)} 权重 × {len(policies)} 规则 "
-        f"= {total_screen} 组 | adjust={args.adjust}"
-    )
-    screen_rows: list[dict] = []
-    done = 0
-    equal_weight = 1.0 / len(symbols)
-    for policy in policies:
-        for weights in weights_grid:
-            row = evaluate_full(
-                prices,
-                weights,
-                policy,
-                monthly=args.monthly,
-                commission=args.commission,
-                min_commission=args.min_commission,
-                lot_sizes=lot_sizes,
-            )
-            row["is_equal_weight_benchmark"] = all(
-                abs(weights[symbol] - equal_weight) < 1e-9 for symbol in symbols
-            )
-            screen_rows.append(row)
-            done += 1
-            if done % 250 == 0 or done == total_screen:
-                print(f"  screen: {done}/{total_screen}")
+    def resolve_output_path(raw: str) -> Path:
+        path = Path(raw)
+        return path if path.is_absolute() else OUTPUT_DIR / path
 
-    screen = pd.DataFrame(screen_rows)
+    if args.screen_input:
+        screen_path = resolve_output_path(args.screen_input)
+        screen = pd.read_csv(screen_path)
+        if screen.empty:
+            raise ValueError(f"screen input is empty: {screen_path}")
+        print(
+            f"跳过阶段 1，读取已有 screen: {screen_path} | "
+            f"{len(screen)} rows | {screen['policy'].nunique()} policies"
+        )
+    else:
+        start_idx = max(0, int(args.policy_start))
+        stop_idx = len(all_policies) if args.policy_stop is None else min(len(all_policies), int(args.policy_stop))
+        if stop_idx <= start_idx:
+            raise ValueError("policy slice is empty; require 0 <= start < stop")
+        policies = all_policies[start_idx:stop_idx]
+        total_screen = len(weights_grid) * len(policies)
+        print(
+            f"阶段 1 联合筛选切片: policies[{start_idx}:{stop_idx}] | "
+            f"{len(weights_grid)} 权重 × {len(policies)} 规则 = {total_screen} 组 | "
+            f"adjust={args.adjust}"
+        )
+        screen_rows: list[dict] = []
+        tasks = [(weights, policy) for policy in policies for weights in weights_grid]
+        if args.workers == 1:
+            equal_weight = 1.0 / len(symbols)
+            iterator = []
+            for weights, policy in tasks:
+                row = evaluate_full(
+                    prices,
+                    weights,
+                    policy,
+                    monthly=args.monthly,
+                    commission=args.commission,
+                    min_commission=args.min_commission,
+                    lot_sizes=lot_sizes,
+                )
+                row["is_equal_weight_benchmark"] = all(
+                    abs(weights[symbol] - equal_weight) < 1e-9 for symbol in symbols
+                )
+                iterator.append(row)
+            row_iterator = iter(iterator)
+        else:
+            ctx = mp.get_context("spawn")
+            pool = ctx.Pool(
+                processes=args.workers,
+                initializer=_init_policy_worker,
+                initargs=(
+                    prices,
+                    args.monthly,
+                    args.commission,
+                    args.min_commission,
+                    lot_sizes,
+                    symbols,
+                ),
+            )
+            row_iterator = pool.imap(_evaluate_policy_worker, tasks, chunksize=16)
+
+        try:
+            for done, row in enumerate(row_iterator, start=1):
+                screen_rows.append(row)
+                if done % 250 == 0 or done == total_screen:
+                    print(f"  screen: {done}/{total_screen}")
+        finally:
+            if args.workers != 1:
+                pool.close()
+                pool.join()
+
+        screen = pd.DataFrame(screen_rows)
+        screen_path = resolve_output_path(args.screen_output)
+        screen.to_csv(screen_path, index=False, encoding="utf-8-sig")
+        print(f"阶段 1 screen 已写入: {screen_path}")
+        if args.screen_only:
+            return
+
+    policy_count = int(screen["policy"].nunique())
     selected = select_fold_candidates(screen, args.screen_top_per_policy)
     print(
         f"阶段 2 分段稳健性验证: {len(selected)} 组 "
-        f"({args.screen_top_per_policy} / policy × {len(policies)} policies)"
+        f"({args.screen_top_per_policy} / policy × {policy_count} policies)"
     )
     validated = add_fold_validation(
         selected,

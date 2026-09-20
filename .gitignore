@@ -29,6 +29,8 @@ dca_only_summary.csv
 weight_sweep_*.csv
 walk_forward_*.csv
 risk_*.csv
+# Historical ChinaBond 1Y risk-free-rate snapshot is research input, not output.
+!risk_free.csv
 adjustment_*.csv
 adaptive_*.csv
 

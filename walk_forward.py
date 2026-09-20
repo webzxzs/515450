@@ -16,6 +16,8 @@ rather than falsely compounded across reset accounts.
 from __future__ import annotations
 
 import argparse
+import multiprocessing as mp
+import os
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -24,6 +26,7 @@ import pandas as pd
 
 import config as cfg
 from backtest import StrategyConfig, load_price_table, parse_lot_sizes, run_strategy
+from risk_free_data import annualized_excess_sharpe, annualized_excess_sharpe_from_daily
 from weight_sweep import (
     consensus_candidate,
     default_symbols,
@@ -131,6 +134,44 @@ def _strategy_config(
     )
 
 
+
+
+_WF_WORKER_CONTEXT: dict = {}
+
+
+def _init_wf_worker(
+    train: pd.DataFrame,
+    train_folds: list[pd.DataFrame],
+    monthly: float,
+    rebalance_months: int,
+    commission: float,
+    min_commission: float,
+    lot_sizes: dict[str, int],
+) -> None:
+    global _WF_WORKER_CONTEXT
+    _WF_WORKER_CONTEXT = {
+        "train": train,
+        "train_folds": train_folds,
+        "monthly": monthly,
+        "rebalance_months": rebalance_months,
+        "commission": commission,
+        "min_commission": min_commission,
+        "lot_sizes": lot_sizes,
+    }
+
+
+def _evaluate_wf_candidate(weights: dict[str, float]) -> dict:
+    c = _WF_WORKER_CONTEXT
+    return evaluate_weights(
+        c["train"],
+        c["train_folds"],
+        weights,
+        monthly=c["monthly"],
+        rebalance_months=c["rebalance_months"],
+        commission=c["commission"],
+        min_commission=c["min_commission"],
+        lot_sizes=c["lot_sizes"],
+    )
 def select_weights_on_training(
     train: pd.DataFrame,
     candidates: list[dict[str, float]],
@@ -142,6 +183,7 @@ def select_weights_on_training(
     lot_sizes: dict[str, int],
     folds: int,
     top_n: int,
+    workers: int = 1,
 ) -> tuple[dict[str, float], pd.Series, pd.DataFrame]:
     """Rank candidates using training data only and return robust consensus pick."""
     if folds < 2:
@@ -155,19 +197,38 @@ def select_weights_on_training(
         for i in range(folds)
     ]
 
-    rows = [
-        evaluate_weights(
-            train,
-            train_folds,
-            weights,
-            monthly=monthly,
-            rebalance_months=rebalance_months,
-            commission=commission,
-            min_commission=min_commission,
-            lot_sizes=lot_sizes,
-        )
-        for weights in candidates
-    ]
+    if workers <= 0:
+        raise ValueError("workers must be > 0")
+    if workers == 1:
+        rows = [
+            evaluate_weights(
+                train,
+                train_folds,
+                weights,
+                monthly=monthly,
+                rebalance_months=rebalance_months,
+                commission=commission,
+                min_commission=min_commission,
+                lot_sizes=lot_sizes,
+            )
+            for weights in candidates
+        ]
+    else:
+        ctx = mp.get_context("spawn")
+        with ctx.Pool(
+            processes=workers,
+            initializer=_init_wf_worker,
+            initargs=(
+                train,
+                train_folds,
+                monthly,
+                rebalance_months,
+                commission,
+                min_commission,
+                lot_sizes,
+            ),
+        ) as pool:
+            rows = list(pool.imap(_evaluate_wf_candidate, candidates, chunksize=4))
     ranked = rank_results(pd.DataFrame(rows))
     symbols = list(candidates[0])
     recommendation, _ = consensus_candidate(ranked, symbols, top_n=top_n)
@@ -193,7 +254,10 @@ def _aggregate_oos_nav(daily_parts: list[pd.DataFrame]) -> pd.DataFrame:
     rows: list[pd.DataFrame] = []
     nav = 1.0
     for window_no, daily in enumerate(daily_parts, start=1):
-        part = daily[["date", "twr_return"]].copy()
+        cols = ["date", "twr_return"]
+        if "risk_free_daily" in daily.columns:
+            cols.append("risk_free_daily")
+        part = daily[cols].copy()
         part["window"] = window_no
         part["oos_nav"] = np.nan
         for idx, value in part["twr_return"].items():
@@ -226,17 +290,21 @@ def summarize_walk_forward(results: pd.DataFrame, oos_nav: pd.DataFrame) -> dict
     }
 
     if not oos_nav.empty:
-        returns = pd.to_numeric(oos_nav["twr_return"], errors="coerce").replace(
-            [np.inf, -np.inf], np.nan
-        ).dropna()
+        return_frame = oos_nav[["date", "twr_return"]].copy()
+        return_frame["twr_return"] = pd.to_numeric(
+            return_frame["twr_return"], errors="coerce"
+        ).replace([np.inf, -np.inf], np.nan)
+        return_frame = return_frame.dropna()
+        returns = return_frame["twr_return"]
         nav = pd.to_numeric(oos_nav["oos_nav"], errors="coerce").dropna()
-        if len(returns) > 1:
-            std = float(returns.std(ddof=1))
-            summary["stitched_oos_sharpe"] = (
-                float(returns.mean() / std * np.sqrt(242)) if std > 1e-12 else float("nan")
+        summary["stitched_oos_sharpe"] = (
+            annualized_excess_sharpe_from_daily(
+                returns,
+                oos_nav.loc[return_frame.index, "risk_free_daily"],
             )
-        else:
-            summary["stitched_oos_sharpe"] = float("nan")
+            if "risk_free_daily" in oos_nav.columns
+            else annualized_excess_sharpe(returns, return_frame["date"])
+        )
         if not nav.empty:
             dd = nav / nav.cummax() - 1.0
             summary["stitched_oos_max_drawdown"] = float(dd.min())
@@ -279,11 +347,19 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--commission", type=float, default=cfg.COMMISSION)
     parser.add_argument("--min-commission", type=float, default=cfg.MIN_COMMISSION)
     parser.add_argument("--lot-sizes", default="")
+    parser.add_argument(
+        "--workers",
+        type=int,
+        default=min(8, max(1, os.cpu_count() or 1)),
+        help="训练期候选权重评估的并行进程数",
+    )
     return parser
 
 
 def main() -> None:
     args = build_parser().parse_args()
+    if args.workers <= 0:
+        raise ValueError("--workers must be > 0")
     symbols = default_symbols()
     candidates = generate_weight_grid(
         symbols,
@@ -336,6 +412,7 @@ def main() -> None:
             lot_sizes=lot_sizes,
             folds=args.folds,
             top_n=args.top,
+            workers=args.workers,
         )
 
         selected_result = run_strategy(
