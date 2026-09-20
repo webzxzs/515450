@@ -155,6 +155,28 @@ class AdaptiveStrategyTests(unittest.TestCase):
         self.assertIn("underweight_threshold_10pct", names)
         self.assertIn("underweight_none", names)
 
+    def test_dividend_cash_is_not_external_contribution(self):
+        prices = pd.DataFrame(
+            {
+                "date": pd.to_datetime(["2024-01-02", "2024-01-15"]),
+                "A": [10.0, 9.0],
+                "B": [10.0, 10.0],
+                "dividend_A": [0.0, 10.0],
+                "dividend_B": [0.0, 0.0],
+            }
+        )
+        result = run_adaptive_strategy(
+            prices,
+            self._config(
+                monthly_contribution=100.0,
+                contribution_mode="target",
+            ),
+        )
+
+        self.assertEqual(result.summary["total_contribution"], 100.0)
+        self.assertEqual(result.summary["total_dividends"], 50.0)
+        self.assertTrue((result.trades["reason"] == "DIVIDEND_REINVEST").any())
+
 
 if __name__ == "__main__":
     unittest.main()

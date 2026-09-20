@@ -206,6 +206,7 @@ def fetch_daily(
     end: date | str | None = None,
     *,
     adjust: str = "actual",
+    allow_empty: bool = False,
 ) -> pd.DataFrame:
     """Fetch daily Longbridge candles for a date range."""
     if adjust not in {"actual", "forward"}:
@@ -223,6 +224,8 @@ def fetch_daily(
         if not part.empty:
             frames.append(part)
 
+    if not frames and allow_empty:
+        return pd.DataFrame(columns=REQUIRED_COLUMNS + ["volume", "amount"])
     if not frames:
         raise LongbridgeDataError(f"Longbridge returned no daily data for {lb_symbol}")
 
@@ -274,7 +277,19 @@ def load_daily_data(
     frames = [cached] if cached is not None and not cached.empty else []
     for a, b in fetch_ranges:
         if a <= b:
-            frames.append(fetch_daily(info.symbol, a, b, adjust=adjust))
+            # Missing incremental ranges are legitimate around ETF listing dates
+            # and on weekends/market holidays. When an existing cache already
+            # gives us valid observations, an empty edge fetch should not make
+            # the whole cache unusable.
+            part = fetch_daily(
+                info.symbol,
+                a,
+                b,
+                adjust=adjust,
+                allow_empty=cached is not None and not cached.empty,
+            )
+            if not part.empty:
+                frames.append(part)
 
     if not frames:
         raise LongbridgeDataError(f"No data available for {info.symbol}")

@@ -44,6 +44,39 @@ class PortfolioStrategyTests(unittest.TestCase):
         self.assertFalse(bool(jan5["tradable_BBB.SH"]))
         self.assertTrue(bool(jan5["tradable_AAA.SH"]))
 
+    def test_price_loader_ignores_zero_price_placeholders_before_listing(self):
+        aaa = pd.DataFrame(
+            {
+                "date": pd.to_datetime(["2026-01-02", "2026-01-05", "2026-01-06"]),
+                "close": [10.0, 11.0, 12.0],
+            }
+        )
+        bbb = pd.DataFrame(
+            {
+                "date": pd.to_datetime(["2026-01-02", "2026-01-05", "2026-01-06"]),
+                "close": [0.0, 20.0, 21.0],
+            }
+        )
+
+        def fake_load(symbol, **kwargs):
+            return aaa.copy() if symbol == "AAA.SH" else bbb.copy()
+
+        with patch("backtest.load_daily_data", side_effect=fake_load):
+            prices = load_price_table(
+                ["AAA.SH", "BBB.SH"],
+                start="2026-01-01",
+                end=None,
+                adjust="forward",
+                refresh=False,
+            )
+
+        self.assertEqual(
+            prices["date"].tolist(),
+            [pd.Timestamp("2026-01-05"), pd.Timestamp("2026-01-06")],
+        )
+        self.assertEqual(float(prices.iloc[0]["BBB.SH"]), 20.0)
+        self.assertTrue(bool(prices.iloc[0]["tradable_BBB.SH"]))
+
     def test_strategy_does_not_trade_symbol_on_unavailable_date(self):
         prices = pd.DataFrame(
             {
@@ -122,6 +155,32 @@ class PortfolioStrategyTests(unittest.TestCase):
         self.assertFalse((result.trades["reason"] == "REBALANCE").any())
         self.assertFalse((result.trades["side"] == "SELL").any())
         self.assertEqual(result.summary["total_contribution"], 3000)
+
+    def test_dividend_is_internal_cash_and_reinvested(self):
+        prices = pd.DataFrame(
+            {
+                "date": pd.to_datetime(["2026-01-02", "2026-01-15"]),
+                "AAA.SH": [10.0, 9.0],
+                "BBB.SH": [10.0, 10.0],
+                "dividend_AAA.SH": [0.0, 10.0],
+                "dividend_BBB.SH": [0.0, 0.0],
+            }
+        )
+        cfg = StrategyConfig(
+            weights={"AAA.SH": 0.5, "BBB.SH": 0.5},
+            monthly_contribution=100.0,
+            rebalance_months=0,
+            commission_rate=0.0,
+            min_commission=0.0,
+            lot_sizes={"AAA.SH": 1, "BBB.SH": 1},
+        )
+
+        result = run_strategy(prices, cfg)
+
+        self.assertEqual(result.summary["total_contribution"], 100.0)
+        self.assertEqual(result.summary["total_dividends"], 50.0)
+        self.assertTrue((result.trades["reason"] == "DIVIDEND_REINVEST").any())
+        self.assertEqual(float(result.daily.iloc[-1]["cumulative_dividends"]), 50.0)
 
 
 if __name__ == "__main__":

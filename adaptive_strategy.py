@@ -33,6 +33,7 @@ from backtest import (
     _max_affordable_shares,
     _round_down_shares,
     _xirr,
+    dividend_column,
     tradable_column,
 )
 
@@ -106,6 +107,7 @@ def run_adaptive_strategy(prices: pd.DataFrame, scfg: AdaptiveStrategyConfig) ->
     previous_month: str | None = None
     previous_value: float | None = None
     nav = 1.0
+    total_dividends = 0.0
 
     def is_tradable(row: pd.Series, symbol: str) -> bool:
         col = tradable_column(symbol)
@@ -210,14 +212,19 @@ def run_adaptive_strategy(prices: pd.DataFrame, scfg: AdaptiveStrategyConfig) ->
         record_trade(ts, symbol, "SELL", reason, price, qty, fee)
         return qty
 
-    def invest_target(ts: pd.Timestamp, row: pd.Series) -> None:
+    def invest_target(
+        ts: pd.Timestamp,
+        row: pd.Series,
+        budget_total: float,
+        reason: str,
+    ) -> None:
         for symbol, weight in scfg.weights.items():
             if weight <= 0:
                 continue
-            budget = scfg.monthly_contribution * weight
+            budget = budget_total * weight
             price = float(row[symbol])
             desired = _round_down_shares(budget / price, scfg.lot_sizes[symbol])
-            buy(ts, row, symbol, desired, "DCA_TARGET")
+            buy(ts, row, symbol, desired, reason)
 
     def invest_underweight(ts: pd.Timestamp, row: pd.Series) -> None:
         """Spend available cash toward target sleeves without selling anything."""
@@ -279,8 +286,25 @@ def run_adaptive_strategy(prices: pd.DataFrame, scfg: AdaptiveStrategyConfig) ->
         ts = pd.Timestamp(row["date"])
         month = ts.strftime("%Y-%m")
         contribution_today = 0.0
+        dividend_today = 0.0
         rebalanced_today = False
         rebalance_trigger = ""
+
+        for symbol in symbols:
+            col = dividend_column(symbol)
+            per_share = float(row[col]) if col in row.index else 0.0
+            if per_share <= 0 or shares[symbol] <= 0:
+                continue
+            amount = shares[symbol] * per_share
+            cash += amount
+            dividend_today += amount
+            total_dividends += amount
+
+        if dividend_today > 0:
+            if scfg.contribution_mode == "underweight":
+                invest_underweight(ts, row)
+            else:
+                invest_target(ts, row, dividend_today, "DIVIDEND_REINVEST")
 
         if month != previous_month:
             previous_month = month
@@ -303,7 +327,7 @@ def run_adaptive_strategy(prices: pd.DataFrame, scfg: AdaptiveStrategyConfig) ->
                 if scfg.contribution_mode == "underweight":
                     invest_underweight(ts, row)
                 else:
-                    invest_target(ts, row)
+                    invest_target(ts, row, scfg.monthly_contribution, "DCA_TARGET")
 
                 threshold_due = (
                     scfg.rebalance_rule in {"threshold", "either"}
@@ -322,6 +346,7 @@ def run_adaptive_strategy(prices: pd.DataFrame, scfg: AdaptiveStrategyConfig) ->
                 "portfolio_value": equity,
                 "cash": cash,
                 "cumulative_contribution": contributed,
+                "cumulative_dividends": total_dividends,
                 "rebalanced": rebalanced_today,
                 "rebalance_trigger": rebalance_trigger,
                 "max_weight_drift": drift,
@@ -347,7 +372,9 @@ def run_adaptive_strategy(prices: pd.DataFrame, scfg: AdaptiveStrategyConfig) ->
             "portfolio_value": value,
             "cash": cash,
             "cumulative_contribution": contributed,
+            "cumulative_dividends": total_dividends,
             "cash_flow": contribution_today,
+            "dividend_cash_flow": dividend_today,
             "twr_return": twr_return,
             "nav": nav,
         }
@@ -394,6 +421,7 @@ def run_adaptive_strategy(prices: pd.DataFrame, scfg: AdaptiveStrategyConfig) ->
         "end": str(pd.Timestamp(daily_df.iloc[-1]["date"]).date()),
         "months": contribution_count,
         "total_contribution": contributed,
+        "total_dividends": total_dividends,
         "final_value": final_value,
         "pnl": final_value - contributed,
         "xirr": xirr,

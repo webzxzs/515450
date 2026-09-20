@@ -23,7 +23,7 @@ import numpy as np
 import pandas as pd
 
 import config as cfg
-from backtest import load_price_table, parse_portfolio
+from backtest import dividend_column, load_price_table, parse_portfolio
 
 
 OUTPUT_DIR = Path(__file__).resolve().parent
@@ -39,6 +39,11 @@ def return_table(prices: pd.DataFrame, symbols: list[str]) -> pd.DataFrame:
     table["date"] = pd.to_datetime(table["date"])
     values = table[symbols].apply(pd.to_numeric, errors="coerce")
     returns = values.pct_change(fill_method=None)
+    for symbol in symbols:
+        col = dividend_column(symbol)
+        if col in prices.columns:
+            dividends = pd.to_numeric(prices[col], errors="coerce").fillna(0.0)
+            returns[symbol] = (values[symbol] + dividends) / values[symbol].shift(1) - 1.0
     returns.insert(0, "date", table["date"])
     returns = returns.replace([np.inf, -np.inf], np.nan).dropna().reset_index(drop=True)
     if len(returns) < 20:
@@ -248,7 +253,11 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--portfolio", default=cfg.DEFAULT_PORTFOLIO)
     parser.add_argument("--start", default=cfg.START_DATE)
     parser.add_argument("--end", default=None)
-    parser.add_argument("--adjust", choices=["actual", "forward"], default=cfg.PRICE_ADJUST)
+    parser.add_argument(
+        "--adjust",
+        choices=["actual", "forward", "total_return"],
+        default=cfg.PRICE_ADJUST,
+    )
     parser.add_argument("--refresh", action="store_true")
     parser.add_argument("--rolling-window", type=int, default=242)
     parser.add_argument("--rolling-stride", type=int, default=21)

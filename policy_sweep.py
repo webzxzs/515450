@@ -3,7 +3,8 @@
 
 The equal-weight portfolio is never used as a search center. With the current
 five-ETF universe, default 5% step, and 10%-50% bounds, the script evaluates
-976 bounded weight combinations under every policy.
+1,554 bounded weight combinations under every policy with the current
+per-asset bounds.
 
 To keep runtime practical without letting one rebalance style pre-filter the
 weights for every other style, the search is two-stage:
@@ -353,7 +354,11 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--monthly", type=float, default=cfg.MONTHLY_CONTRIBUTION)
     parser.add_argument("--start", default=cfg.START_DATE)
     parser.add_argument("--end", default=None)
-    parser.add_argument("--adjust", choices=["actual", "forward"], default=cfg.PRICE_ADJUST)
+    parser.add_argument(
+        "--adjust",
+        choices=["actual", "forward", "total_return"],
+        default=cfg.PRICE_ADJUST,
+    )
     parser.add_argument("--refresh", action="store_true")
     parser.add_argument("--commission", type=float, default=cfg.COMMISSION)
     parser.add_argument("--min-commission", type=float, default=cfg.MIN_COMMISSION)

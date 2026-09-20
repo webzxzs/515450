@@ -1,14 +1,15 @@
 #!/usr/bin/env python3
 """Default configuration for the Longbridge ETF portfolio backtest."""
 
-# Baseline portfolio for quick runs only. Equal weight is NOT a recommended or
-# assumed optimum; weight_sweep.py / policy_sweep.py are responsible for
-# discovering robust allocations from the configured ETF universe.
+# Current stored research allocation. It follows the latest completed
+# explicit-dividend policy_sweep joint leader rather than preserving a prior
+# hand-picked default. Re-run the research stack before changing it again as
+# market history grows.
 #
 # 518850.SH = 华夏黄金ETF. Gold is included as a distinct defensive / real-asset
 # sleeve; its long-term target weight must be discovered by the research layer.
 DEFAULT_PORTFOLIO = (
-    "513180.SH:0.20,515450.SH:0.20,513300.SH:0.20,159783.SZ:0.20,518850.SH:0.20"
+    "513180.SH:0.10,515450.SH:0.15,513300.SH:0.35,159783.SZ:0.10,518850.SH:0.30"
 )
 
 # Default research bounds. Symbols omitted here fall back to the CLI/global
@@ -21,15 +22,16 @@ WEIGHT_BOUNDS = {
 
 # Strategy cadence
 MONTHLY_CONTRIBUTION = 5000.0
-REBALANCE_MONTHS = 3
+REBALANCE_MONTHS = 1
 START_DATE = "2020-01-01"
 
 # Price basis
-# Longbridge documents forward adjustment as accounting for splits/dividends.
-# The project therefore defaults to forward-adjusted prices for long-horizon
-# return research. Use `--adjust actual` when you want an unadjusted execution-
-# price sensitivity check for lot sizing / fees / raw market-price behavior.
-PRICE_ADJUST = "forward"
+# Long-horizon research defaults to Longbridge actual market prices plus the
+# repo-maintained explicit ETF cash-dividend schedule. This avoids relying on
+# Longbridge ForwardAdjust as a black-box total-return proxy.
+# Use --adjust actual for raw-price execution sensitivity and
+# --adjust forward only for Longbridge adjustment diagnostics.
+PRICE_ADJUST = "total_return"
 
 # Trading costs
 COMMISSION = 0.000087

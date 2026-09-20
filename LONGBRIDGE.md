@@ -36,12 +36,13 @@ BACKTEST_LONGBRIDGE_CACHE=/your/cache/path
 
 ## 价格口径
 
-长期组合研究默认使用前复权：
+长期组合研究默认使用显式总收益口径：
 
 ```bash
-python backtest.py --adjust forward
+python backtest.py --adjust total_return
 ```
 
+它使用 Longbridge actual 日线，再叠加仓库 `dividends.csv` 中已核实的现金分红。
 这也是 `config.PRICE_ADJUST` 当前默认值。
 
 如需检查原始市场价格、整手和手续费敏感性：
@@ -49,6 +50,8 @@ python backtest.py --adjust forward
 ```bash
 python backtest.py --adjust actual
 ```
+
+Longbridge `forward` 仍可用于对账，但不再作为长期收益默认口径。
 
 强制刷新缓存：
 

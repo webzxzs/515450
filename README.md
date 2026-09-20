@@ -16,19 +16,22 @@
 
 基金选择规则：**同类暴露下，如果跟踪质量、费率、规模、流动性、历史长度和 Longbridge 数据质量没有明显劣势，优先选择华夏基金产品。** 这个偏好只影响“用哪只 ETF 代表某类资产”，不决定该资产应该配多少权重。
 
-## 默认组合只是 benchmark
+## 当前默认研究组合
 
-`config.py` 当前快速运行基准为五等权：
+config.py 当前保存的是 2026-09-20 用最新 Longbridge 数据重新筛选后，
+最接近 Top 稳健区域中心的 5% 网格候选：
 
-```text
-513180.SH  20%
-515450.SH  20%
-513300.SH  20%
-159783.SZ  20%
-518850.SH  20%
-```
+~~~text
+513180.SH  10%
+515450.SH  25%
+513300.SH  25%
+159783.SZ  15%
+518850.SH  25%
+~~~
 
-它不是推荐比例，也不是搜索中心。
+它不是“历史收益第一名”，而是刻意选择更接近 Top 区域中心的稳健候选。
+五等权仍作为中性 benchmark 保留在研究中。详细依据见
+PORTFOLIO_RESEARCH_2026-09-20.md。
 
 ## 最终权重研究边界
 
@@ -116,12 +119,12 @@
 
 黄金加入的核心价值，就是检验它是否真的提供一个不同于股票成长因子的风险来源。
 
-## 5. 长期收益默认用前复权
+## 5. 长期收益默认用显式总收益
 
 默认：
 
 ```text
-Longbridge forward
+Longbridge actual + dividends.csv
 ```
 
 需要看原始价格、整手和费用敏感性时：
@@ -130,7 +133,7 @@ Longbridge forward
 python backtest.py --adjust actual
 ```
 
-`adjustment_analysis.py` 用于 actual 与 forward 对账。
+`adjustment_analysis.py` 用于 actual / explicit total_return / Longbridge forward 三口径对账。
 
 ---
 
@@ -172,6 +175,8 @@ python backtest.py --adjust actual
 | `walk_forward.py` | 严格时间顺序样本外验证 |
 | `risk_analysis.py` | 相关性、风险贡献、PCA、滚动风险 |
 | `adjustment_analysis.py` | actual vs forward 对账 |
+| `dividend_data.py` / `dividends.csv` | 显式 ETF 现金分红与总收益重建 |
+| `update_dividends.py` | AKShare 双数据源校验并更新分红快照 |
 | `longbridge_data.py` | Longbridge 日 K 与缓存 |
 | `config.py` | ETF universe、研究边界和基础参数 |
 
@@ -293,7 +298,8 @@ GitHub Actions 只跑离线测试，不访问 Longbridge 账户。
 - 缺行情日估值前填与禁止交易；
 - Walk-Forward 无数据泄漏；
 - 风险贡献和 PCA；
-- actual / forward 对账逻辑。
+- actual / explicit total_return / forward 对账逻辑；
+- 现金分红总收益重建。
 
 ---
 

@@ -1,19 +1,20 @@
 # 复权与总收益口径
 
-本项目默认研究口径使用 Longbridge `forward` 前复权价格。
+本项目默认研究口径使用 `total_return`：
 
-Longbridge 官方文档说明：`--adjust forward` 会对历史 K 线按拆分/分红进行前复权。因此：
+`Longbridge actual 市价 + dividends.csv 中逐笔现金分红`，并在除息日按分红再投资构造
+总收益价格序列。
 
-- `weight_sweep.py`：默认使用 forward，避免只看价格收益；
-- `policy_sweep.py`：默认使用 forward，联合权重/执行规则搜索使用同一长期收益口径；
-- `walk_forward.py`：默认使用 forward，样本外验证基于总收益代理；
-- `risk_analysis.py`：默认使用 forward，风险/相关性尽量不被除息跳空污染；
-- `backtest.py`：默认也跟随 `config.PRICE_ADJUST=forward`，用于长期定投收益研究；
+- `weight_sweep.py` / `policy_sweep.py` / `walk_forward.py` 默认使用 total_return；
+- `risk_analysis.py` 默认使用 total_return，避免现金分红制造虚假价格跳空；
+- `backtest.py` 跟随 `config.PRICE_ADJUST=total_return`；
 - 如需看原始市场价格、整手与手续费的执行敏感性，显式使用 `--adjust actual`。
+- `--adjust forward` 只保留为 Longbridge 复权诊断，不再作为长期研究默认值。
 
-## 为什么不直接伪造分红现金
+## 显式分红数据
 
-Longbridge 的 ETF 分红历史接口并不能为当前研究 universe 提供一套完整、稳定、可依赖的逐笔现金分配历史，因此项目不把未知分红金额猜成现金流。
+`dividends.csv` 保存当前 universe 已核实的 ETF 现金分红。现在有明确现金分红历史的是
+`515450.SH`，2021-11 到 2026-09 共 9 次，累计 0.455 元/份。
 
 当前 universe：
 
@@ -25,12 +26,26 @@ Longbridge 的 ETF 分红历史接口并不能为当前研究 universe 提供一
 518850.SH
 ```
 
-这意味着：
+其他标的没有核实到现金分红时，不制造未知现金流；其 total_return 序列等于 actual
+价格序列。
 
-1. `forward` 回测应理解为“总收益代理”；
-2. 历史 adjusted price、历史份额和整手成交是研究代理，不是券商真实成交记录；
-3. `actual` 回测用于观察原始价格/成交约束；
-4. 两者的差异通过 `adjustment_analysis.py` 显式对账。
+515450 的显式分红重建与公开累计净值方向一致，而 Longbridge forward 明显高估该 ETF
+的累计总收益，因此 forward 被降级为诊断口径。
+
+## 分红数据更新
+
+联网更新不由回测代码隐式执行，而是通过：
+
+```bash
+python update_dividends.py
+python update_dividends.py --write
+```
+
+更新器先用 AKShare 的 `fund_etf_dividend_sina` 获取 ETF 累计分红并转成逐次现金分红，
+再用 `fund_fh_em`（东方财富）补齐权益登记日、除息日和发放日。两套来源逐笔金额和
+除息日完全一致后，才允许用 `--write` 覆盖 `dividends.csv`。
+
+回测本身始终读取仓库内的冻结快照，不联网抓分红，以保证结果可复现。
 
 ## 对账
 
@@ -50,8 +65,8 @@ adjustment_portfolio_comparison.csv
 
 其中：
 
-- `adjustment_assets.csv`：逐 ETF 比较 actual 与 forward 的累计收益、年化收益和 adjustment uplift；
+- `adjustment_assets.csv`：逐 ETF 比较 actual / explicit total_return / Longbridge forward；
 - `adjustment_daily_wedges.csv`：逐日记录 actual return、forward return 及两者差值；
-- `adjustment_portfolio_comparison.csv`：同一套定投/再平衡参数分别在 actual 和 forward 上回测，比较 XIRR、TWR、Sharpe、最大回撤、费用和期末资产。
+- `adjustment_portfolio_comparison.csv`：同一策略在三种口径上对比。
 
-如果某只 ETF 的 actual/forward 差异很大，就说明只用未复权价格会显著改变长期持有研究结果；如果差异接近 0，则复权对该标的当前样本影响很小。
+对当前 universe，最重要的口径差异来自 515450。长期研究以 explicit total_return 为准。

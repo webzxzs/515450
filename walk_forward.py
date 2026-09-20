@@ -270,7 +270,11 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--rebalance-months", type=int, default=cfg.REBALANCE_MONTHS)
     parser.add_argument("--start", default=cfg.START_DATE)
     parser.add_argument("--end", default=None)
-    parser.add_argument("--adjust", choices=["actual", "forward"], default=cfg.PRICE_ADJUST)
+    parser.add_argument(
+        "--adjust",
+        choices=["actual", "forward", "total_return"],
+        default=cfg.PRICE_ADJUST,
+    )
     parser.add_argument("--refresh", action="store_true")
     parser.add_argument("--commission", type=float, default=cfg.COMMISSION)
     parser.add_argument("--min-commission", type=float, default=cfg.MIN_COMMISSION)
@@ -302,9 +306,8 @@ def main() -> None:
     )
 
     equal_weights = {symbol: 1.0 / len(symbols) for symbol in symbols}
-    # Current config is equal weight today, but keep these concepts separate so
-    # future config changes still compare both a neutral equal-weight benchmark
-    # and the then-current default allocation.
+    # Keep these concepts separate so every run compares both a neutral
+    # equal-weight benchmark and the then-current stored default allocation.
     from backtest import parse_portfolio
 
     configured_weights = parse_portfolio(cfg.DEFAULT_PORTFOLIO)

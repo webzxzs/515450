@@ -1,28 +1,10 @@
 #!/usr/bin/env python3
-"""Compare unadjusted and Longbridge forward-adjusted ETF histories.
+"""Compare actual, explicit-dividend total return, and Longbridge forward.
 
 Why this exists
 ---------------
-Longbridge documents ``--adjust forward`` as forward-adjusting historical K-line
-prices for splits/dividends.  That makes forward-adjusted data the more useful
-basis for long-horizon return research, while unadjusted (``actual``) prices are
-still useful for checking raw market prices, lot sizing, and fee sensitivity.
-
-This module keeps the two roles explicit instead of silently mixing them:
-
-1. Load the same portfolio on ``actual`` and ``forward`` price bases.
-2. Align both histories to the exact same common trading dates.
-3. Measure the per-ETF return uplift attributable to adjustment effects.
-4. Run the same DCA + periodic-rebalance strategy on both price bases as a
-   sensitivity/reconciliation check.
-
-Important limitation
---------------------
-The forward-adjusted backtest is a total-return *proxy*.  Its historical prices
-are synthetic adjusted prices, so the resulting historical share counts, lot
-rounding and fees should not be interpreted as literal broker executions.  The
-project does not manufacture dividend cash events when Longbridge does not
-provide reliable dividend records for the ETF.
+The project now treats explicit cash-dividend reconstruction as the canonical
+long-horizon research basis. Longbridge forward remains a diagnostic series.
 """
 
 from __future__ import annotations
@@ -172,6 +154,7 @@ def asset_adjustment_report(
 
 def strategy_basis_report(
     actual: pd.DataFrame,
+    total_return: pd.DataFrame,
     forward: pd.DataFrame,
     weights: dict[str, float],
     *,
@@ -181,9 +164,16 @@ def strategy_basis_report(
     min_commission: float,
     lot_sizes: dict[str, int],
 ) -> pd.DataFrame:
-    """Run identical strategy settings on actual and forward-adjusted prices."""
+    """Run identical strategy settings on all three price bases."""
     symbols = list(weights)
+    actual, total_return = align_price_bases(actual, total_return, symbols)
     actual, forward = align_price_bases(actual, forward, symbols)
+    common = pd.Index(actual["date"]).intersection(pd.Index(total_return["date"])).intersection(
+        pd.Index(forward["date"])
+    )
+    actual = actual.loc[actual["date"].isin(common)].reset_index(drop=True)
+    total_return = total_return.loc[total_return["date"].isin(common)].reset_index(drop=True)
+    forward = forward.loc[forward["date"].isin(common)].reset_index(drop=True)
     scfg = StrategyConfig(
         weights=weights,
         monthly_contribution=monthly,
@@ -193,6 +183,7 @@ def strategy_basis_report(
         lot_sizes=lot_sizes,
     )
     actual_result = run_strategy(actual, scfg)
+    total_return_result = run_strategy(total_return, scfg)
     forward_result = run_strategy(forward, scfg)
 
     metrics = [
@@ -212,13 +203,54 @@ def strategy_basis_report(
     rows = []
     for metric in metrics:
         a = float(actual_result.summary[metric])
+        t = float(total_return_result.summary[metric])
         f = float(forward_result.summary[metric])
         rows.append(
             {
                 "metric": metric,
                 "actual": a,
-                "forward_adjusted_proxy": f,
-                "forward_minus_actual": f - a,
+                "explicit_total_return": t,
+                "longbridge_forward": f,
+                "explicit_minus_actual": t - a,
+                "forward_minus_explicit": f - t,
+            }
+        )
+    return pd.DataFrame(rows)
+
+
+def three_basis_asset_report(
+    actual: pd.DataFrame,
+    total_return: pd.DataFrame,
+    forward: pd.DataFrame,
+    symbols: list[str],
+) -> pd.DataFrame:
+    """Compare cumulative and annualized return across all three bases."""
+    actual, total_return = align_price_bases(actual, total_return, symbols)
+    actual, forward = align_price_bases(actual, forward, symbols)
+    common = pd.Index(actual["date"]).intersection(pd.Index(total_return["date"])).intersection(
+        pd.Index(forward["date"])
+    )
+    frames = []
+    for frame in (actual, total_return, forward):
+        frames.append(frame.loc[frame["date"].isin(common)].reset_index(drop=True))
+    actual, total_return, forward = frames
+    days = max((actual["date"].iloc[-1] - actual["date"].iloc[0]).days, 1)
+
+    rows = []
+    for symbol in symbols:
+        a0, a1 = float(actual[symbol].iloc[0]), float(actual[symbol].iloc[-1])
+        t0, t1 = float(total_return[symbol].iloc[0]), float(total_return[symbol].iloc[-1])
+        f0, f1 = float(forward[symbol].iloc[0]), float(forward[symbol].iloc[-1])
+        rows.append(
+            {
+                "symbol": symbol,
+                "actual_total_return": a1 / a0 - 1.0,
+                "explicit_total_return": t1 / t0 - 1.0,
+                "longbridge_forward_total_return": f1 / f0 - 1.0,
+                "actual_annualized_return": _annualized_return(a0, a1, days),
+                "explicit_annualized_return": _annualized_return(t0, t1, days),
+                "forward_annualized_return": _annualized_return(f0, f1, days),
+                "forward_minus_explicit_total_return": (f1 / f0) - (t1 / t0),
             }
         )
     return pd.DataFrame(rows)
@@ -265,7 +297,15 @@ def main() -> None:
         adjust="actual",
         refresh=args.refresh,
     )
-    print("加载 forward 前复权价格（Longbridge：splits/dividends adjusted）...")
+    print("加载 explicit total-return（actual + dividends.csv）...")
+    total_return = load_price_table(
+        symbols,
+        start=args.start,
+        end=args.end,
+        adjust="total_return",
+        refresh=False,
+    )
+    print("加载 Longbridge forward，仅用于诊断...")
     forward = load_price_table(
         symbols,
         start=args.start,
@@ -275,14 +315,16 @@ def main() -> None:
     )
     actual, forward = align_price_bases(actual, forward, symbols)
 
-    assets, wedges = asset_adjustment_report(
+    _, wedges = asset_adjustment_report(
         actual,
         forward,
         symbols,
         wedge_threshold=args.wedge_threshold,
     )
+    assets = three_basis_asset_report(actual, total_return, forward, symbols)
     portfolio = strategy_basis_report(
         actual,
+        total_return,
         forward,
         weights,
         monthly=args.monthly,
@@ -301,26 +343,16 @@ def main() -> None:
     )
 
     print("\n=== ETF 复权影响 ===")
-    show = assets[
-        [
-            "symbol",
-            "actual_total_return",
-            "forward_total_return",
-            "annualized_return_uplift",
-            "adjustment_days",
-            "max_abs_daily_adjustment_wedge",
-        ]
-    ].copy()
     with pd.option_context("display.width", 180, "display.max_columns", None):
-        print(show.to_string(index=False))
+        print(assets.to_string(index=False))
 
-    print("\n=== 组合 actual vs forward-adjusted proxy ===")
+    print("\n=== 组合 actual vs explicit total return vs Longbridge forward ===")
     with pd.option_context("display.width", 180, "display.max_columns", None):
         print(portfolio.to_string(index=False))
 
     print(
-        "\n解释：forward-adjusted 是长期总收益研究口径；actual 是原始市场价格口径。"
-        "前复权回测中的历史成交价/份额是代理值，不应当作真实券商成交记录。"
+        "\n解释：explicit total return 是长期研究默认口径；actual 是原始市场价格；"
+        "Longbridge forward 仅用于诊断。total-return 历史成交价/份额仍是研究代理值。"
     )
     print(
         "输出: adjustment_assets.csv / adjustment_daily_wedges.csv / "

@@ -26,6 +26,7 @@ import numpy as np
 import pandas as pd
 
 import config as cfg
+from dividend_data import load_dividend_events
 from longbridge_data import load_daily_data, resolve_symbol
 
 
@@ -109,6 +110,10 @@ def tradable_column(symbol: str) -> str:
     return f"tradable_{symbol}"
 
 
+def dividend_column(symbol: str) -> str:
+    return f"dividend_{symbol}"
+
+
 def load_price_table(
     symbols: Iterable[str],
     *,
@@ -124,12 +129,33 @@ def load_price_table(
     whether that symbol actually had a close on that date. Rows before every
     portfolio symbol has at least one known price are excluded.
     """
+    if adjust not in {"actual", "forward", "total_return"}:
+        raise ValueError("adjust must be actual, forward, or total_return")
+
     symbols = list(symbols)
     merged: pd.DataFrame | None = None
     for symbol in symbols:
-        df = load_daily_data(symbol, start=start, end=end, adjust=adjust, refresh=refresh)
+        source_adjust = "actual" if adjust == "total_return" else adjust
+        df = load_daily_data(
+            symbol,
+            start=start,
+            end=end,
+            adjust=source_adjust,
+            refresh=refresh,
+        )
         part = df[["date", "close"]].copy().rename(columns={"close": symbol})
         part["date"] = pd.to_datetime(part["date"])
+        if adjust == "total_return":
+            events = load_dividend_events(symbol)
+            if events.empty:
+                part[dividend_column(symbol)] = 0.0
+            else:
+                dividend_map = (
+                    events.groupby("ex_date", as_index=True)["cash_per_share"].sum()
+                )
+                part[dividend_column(symbol)] = (
+                    part["date"].map(dividend_map).fillna(0.0).astype(float)
+                )
         part = part.drop_duplicates("date", keep="last")
         merged = part if merged is None else pd.merge(merged, part, on="date", how="outer")
 
@@ -139,8 +165,17 @@ def load_price_table(
     merged = merged.sort_values("date").drop_duplicates("date", keep="last").reset_index(drop=True)
     for symbol in symbols:
         merged[symbol] = pd.to_numeric(merged[symbol], errors="coerce")
+        # Some Longbridge ETF histories include zero-price placeholder rows
+        # before the fund actually starts trading. Treat non-positive prices as
+        # missing observations: they are neither valid valuation prices nor
+        # tradable quotes.
+        merged.loc[merged[symbol] <= 0, symbol] = np.nan
         merged[tradable_column(symbol)] = merged[symbol].notna()
         merged[symbol] = merged[symbol].ffill()
+        if adjust == "total_return":
+            merged[dividend_column(symbol)] = pd.to_numeric(
+                merged[dividend_column(symbol)], errors="coerce"
+            ).fillna(0.0)
 
     merged = merged.dropna(subset=symbols).reset_index(drop=True)
     if len(merged) < 2:
@@ -248,6 +283,7 @@ def run_strategy(prices: pd.DataFrame, scfg: StrategyConfig) -> BacktestResult:
     previous_month: str | None = None
     previous_value: float | None = None
     nav = 1.0
+    total_dividends = 0.0
 
     def is_tradable(row: pd.Series, symbol: str) -> bool:
         col = tradable_column(symbol)
@@ -324,15 +360,20 @@ def run_strategy(prices: pd.DataFrame, scfg: StrategyConfig) -> BacktestResult:
         record_trade(ts, symbol, "SELL", reason, price, qty, fee)
         return qty
 
-    def invest_contribution(ts: pd.Timestamp, row: pd.Series):
+    def invest_target_cash(
+        ts: pd.Timestamp,
+        row: pd.Series,
+        budget_total: float,
+        reason: str,
+    ):
         for symbol, weight in scfg.weights.items():
             if weight <= 0:
                 continue
-            budget = scfg.monthly_contribution * weight
+            budget = budget_total * weight
             price = float(row[symbol])
             lot = scfg.lot_sizes[symbol]
             desired = _round_down_shares(budget / price, lot)
-            buy(ts, row, symbol, desired, "DCA")
+            buy(ts, row, symbol, desired, reason)
 
     def rebalance(ts: pd.Timestamp, row: pd.Series):
         equity = total_value(row)
@@ -357,7 +398,21 @@ def run_strategy(prices: pd.DataFrame, scfg: StrategyConfig) -> BacktestResult:
         ts = pd.Timestamp(row["date"])
         month = ts.strftime("%Y-%m")
         contribution_today = 0.0
+        dividend_today = 0.0
         rebalanced_today = False
+
+        for symbol in symbols:
+            col = dividend_column(symbol)
+            per_share = float(row[col]) if col in row.index else 0.0
+            if per_share <= 0 or shares[symbol] <= 0:
+                continue
+            amount = shares[symbol] * per_share
+            cash += amount
+            dividend_today += amount
+            total_dividends += amount
+
+        if dividend_today > 0:
+            invest_target_cash(ts, row, dividend_today, "DIVIDEND_REINVEST")
 
         if month != previous_month:
             previous_month = month
@@ -371,7 +426,7 @@ def run_strategy(prices: pd.DataFrame, scfg: StrategyConfig) -> BacktestResult:
                 rebalance(ts, row)
                 rebalanced_today = True
             else:
-                invest_contribution(ts, row)
+                invest_target_cash(ts, row, scfg.monthly_contribution, "DCA")
 
             equity = total_value(row)
             snap = {
@@ -380,6 +435,7 @@ def run_strategy(prices: pd.DataFrame, scfg: StrategyConfig) -> BacktestResult:
                 "portfolio_value": equity,
                 "cash": cash,
                 "cumulative_contribution": contributed,
+                "cumulative_dividends": total_dividends,
                 "rebalanced": rebalanced_today,
             }
             for symbol in symbols:
@@ -402,7 +458,9 @@ def run_strategy(prices: pd.DataFrame, scfg: StrategyConfig) -> BacktestResult:
             "portfolio_value": value,
             "cash": cash,
             "cumulative_contribution": contributed,
+            "cumulative_dividends": total_dividends,
             "cash_flow": contribution_today,
+            "dividend_cash_flow": dividend_today,
             "twr_return": twr_return,
             "nav": nav,
         }
@@ -445,6 +503,7 @@ def run_strategy(prices: pd.DataFrame, scfg: StrategyConfig) -> BacktestResult:
         "end": str(pd.Timestamp(daily_df.iloc[-1]["date"]).date()),
         "months": contribution_count,
         "total_contribution": contributed,
+        "total_dividends": total_dividends,
         "final_value": final_value,
         "pnl": final_value - contributed,
         "xirr": xirr,
@@ -500,15 +559,15 @@ def _print_summary(title: str, summary: dict) -> None:
 
     print(f"\n=== {title} ===")
     print(f"区间: {summary['start']} ~ {summary['end']} | 定投月数: {summary['months']}")
-    print(f"累计投入: ¥{summary['total_contribution']:,.2f}")
-    print(f"期末资产: ¥{summary['final_value']:,.2f} | 盈亏: ¥{summary['pnl']:,.2f}")
+    print(f"累计投入: {summary['total_contribution']:,.2f} 元")
+    print(f"期末资产: {summary['final_value']:,.2f} 元 | 盈亏: {summary['pnl']:,.2f} 元")
     print(f"XIRR: {pct(summary['xirr'])} | 年化TWR: {pct(summary['annualized_twr'])}")
     print(f"Sharpe: {summary['sharpe']:.3f} | 最大回撤: {pct(summary['max_drawdown'])}")
     print(
         f"交易次数: {summary['trade_count']} | "
         f"再平衡次数: {summary['rebalance_events']} | "
         f"再平衡交易: {summary['rebalance_trade_count']} | "
-        f"总费用: ¥{summary['total_fees']:,.2f}"
+        f"总费用: {summary['total_fees']:,.2f} 元"
     )
 
 
@@ -535,7 +594,7 @@ def build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument("--end", default=None)
     parser.add_argument(
         "--adjust",
-        choices=["actual", "forward"],
+        choices=["actual", "forward", "total_return"],
         default=cfg.PRICE_ADJUST,
     )
     parser.add_argument("--refresh", action="store_true", help="强制刷新 Longbridge 缓存")
@@ -576,11 +635,11 @@ def main() -> None:
         print(f"  {symbol}: {weight:.1%} | lot={lot_sizes[symbol]}")
     if args.rebalance_months:
         print(
-            f"每月定投: ¥{args.monthly:,.2f} | "
+            f"每月定投: {args.monthly:,.2f} 元 | "
             f"每 {args.rebalance_months} 个月再平衡"
         )
     else:
-        print(f"每月定投: ¥{args.monthly:,.2f} | 不再平衡")
+        print(f"每月定投: {args.monthly:,.2f} 元 | 不再平衡")
     print(
         f"估值数据区间: {prices['date'].iloc[0].date()} ~ "
         f"{prices['date'].iloc[-1].date()} ({len(prices)} 天)"
