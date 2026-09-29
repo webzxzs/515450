@@ -1,24 +1,26 @@
-# 多 ETF 定投与再平衡研究框架
+<p align="right"><strong>English</strong> | <a href="./README_CN.md">中文</a></p>
 
-这是一个基于 **Longbridge 日线行情**的个人长期资产配置研究项目。
+# Multi-ETF DCA & Rebalancing Research Framework
 
-项目定位很明确：**只做研究，不做自动下单，不做实盘执行系统。** 对这种低频定投与再平衡，研究的价值在于资产选择、长期权重、再平衡规则和风险结构，而不是交易自动化。
+This is a personal long-term asset-allocation research project built on **Longbridge daily market data**.
 
-## 当前 ETF universe
+The scope is intentionally narrow: **research only — no automated order placement and no live-trading execution system.** For a low-frequency DCA and rebalancing strategy, the main research value lies in asset selection, long-term target weights, rebalancing rules, and portfolio risk structure rather than trading automation.
 
-| 代码 | 资产 / 作用 | 基金管理人 |
+## Current ETF Universe
+
+| Ticker | Exposure / Role | Fund Manager |
 | --- | --- | --- |
-| `513180.SH` | 恒生科技 | 华夏基金 |
-| `515450.SH` | A股红利低波 | 南方基金 |
-| `513300.SH` | 纳斯达克100 | 华夏基金 |
-| `159783.SZ` | 科创创业50 | 华夏基金 |
-| `518850.SH` | 黄金 | 华夏基金 |
+| `513180.SH` | Hang Seng TECH | ChinaAMC |
+| `515450.SH` | China A-share dividend low-volatility | China Southern Asset Management |
+| `513300.SH` | Nasdaq-100 | ChinaAMC |
+| `159783.SZ` | STAR 50 + ChiNext 50 | ChinaAMC |
+| `518850.SH` | Gold | ChinaAMC |
 
-基金选择规则：**同类暴露下，如果跟踪质量、费率、规模、流动性、历史长度和 Longbridge 数据质量没有明显劣势，优先选择华夏基金产品。** 这个偏好只影响“用哪只 ETF 代表某类资产”，不决定该资产应该配多少权重。
+ETF selection rule: **for comparable exposures, prefer ChinaAMC products when tracking quality, fees, fund size, liquidity, history length, and Longbridge data quality are not meaningfully worse.** This preference only affects which ETF represents an asset class; it does not determine how much portfolio weight that asset class should receive.
 
-## 当前默认研究组合
+## Current Default Research Portfolio
 
-config.py 当前保存的是 2026-09-20 在显式分红总收益、历史无风险利率 Sharpe 和完整 `policy_sweep` 下的联合第一名：
+`config.py` currently stores the joint top-ranked in-sample result as of **2026-09-20**, using explicit dividend total returns, Sharpe ratios based on historical risk-free rates, and the full `policy_sweep`:
 
 ~~~text
 513180.SH  10%
@@ -28,13 +30,17 @@ config.py 当前保存的是 2026-09-20 在显式分红总收益、历史无风�
 518850.SH  30%
 ~~~
 
-默认执行规则为**每月目标再平衡**。它是当前研究系统的样本内最佳可执行结论，不代表该精确比例已经被充分样本外证明；五等权仍作为中性 benchmark 保留。详细依据见 PORTFOLIO_RESEARCH_2026-09-20.md。
+The default execution rule is **monthly target rebalancing**.
 
-## 最终权重研究边界
+This is the current research system's best executable in-sample result. It does **not** imply that the exact allocation has been sufficiently validated out of sample. A 20% equal-weight portfolio remains the neutral benchmark.
 
-项目支持 **每只 ETF 独立上下限**。
+See `PORTFOLIO_RESEARCH_2026-09-20.md` for the detailed rationale.
 
-当前默认：
+## Final Weight Search Boundaries
+
+The framework supports **independent lower and upper bounds for every ETF**.
+
+Current defaults:
 
 ```text
 513180.SH   10% ~ 50%
@@ -42,152 +48,163 @@ config.py 当前保存的是 2026-09-20 在显式分红总收益、历史无风�
 513300.SH   10% ~ 50%
 159783.SZ   10% ~ 50%
 518850.SH    0% ~ 30%
-权重步长          5%
+Weight step          5%
 ```
 
-黄金特意允许到 **0%**。这样研究可以得出“当前五资产框架其实不需要黄金”的结论，而不是因为统一的 10% 下限被迫持有黄金。
+Gold is deliberately allowed to fall to **0%**. This makes it possible for the research to conclude that the current five-asset framework does not need gold, rather than forcing a gold allocation through a universal 10% floor.
 
-在当前边界下，5% 网格共有：
+Under the current boundaries, the 5% grid contains:
 
 ```text
-1,554 组权重
+1,554 weight combinations
 ```
 
-`policy_sweep.py` 默认比较 16 种定投 / 再平衡执行规则，因此 Stage 1 当前为：
+`policy_sweep.py` compares 16 DCA / rebalancing execution policies by default, so Stage 1 currently evaluates:
 
 ```text
-1,554 × 16 = 24,864 组完整历史回测
+1,554 × 16 = 24,864 full-history backtests
 ```
 
-这些数字由配置决定；如果以后修改边界，应以程序运行时输出为准，不要把固定数字当成模型假设。
+These counts are configuration-dependent. If the search boundaries change, trust the runtime output rather than treating the current numbers as model assumptions.
 
 ---
 
-# 研究原则
+# Research Principles
 
-## 1. 不把历史第一名直接当答案
+## 1. Do not treat the historical winner as the answer
 
-真正关注：
+The real questions are:
 
-- Top 区域是否集中；
-- 最差时间段是否还能接受；
-- Walk-Forward 样本外是否成立；
-- 相邻参数变化会不会彻底改变结论；
-- 黄金权重是否长期落在相似区间，还是频繁从 0% 跳到上限。
+- Is the top-performing region concentrated or broad?
+- Is the worst historical period still acceptable?
+- Does the conclusion survive walk-forward out-of-sample testing?
+- Do small parameter changes completely alter the result?
+- Does the gold allocation remain in a similar range over time, or repeatedly jump between 0% and its upper bound?
 
-## 2. 权重和执行规则一起研究
+## 2. Study weights and execution rules together
 
-项目同时研究：
-
-```text
-目标权重
-×
-月度资金分配方式
-×
-再平衡规则
-```
-
-一个权重在 3 个月固定再平衡下表现好，不代表在“低配优先定投 + 阈值再平衡”下仍然最好。
-
-## 3. 样本外优先
-
-`walk_forward.py` 严格执行：
+The framework jointly studies:
 
 ```text
-过去 3 年训练 / 选择权重
-未来 12 个月完全样本外验证
-然后向前滚动
+Target weights
+×
+Monthly contribution allocation method
+×
+Rebalancing rule
 ```
 
-测试期不能参与本轮参数选择。
+A weight vector that works well under fixed three-month rebalancing is not automatically optimal under an underweight-first contribution rule plus threshold rebalancing.
 
-## 4. 资本分散不等于风险分散
+## 3. Prioritize out-of-sample validation
 
-五等权不等于五等风险。`risk_analysis.py` 会分析：
+`walk_forward.py` strictly follows:
 
-- 波动率；
-- 相关性；
-- component risk contribution；
-- risk share；
-- diversification ratio；
-- PCA 第一主成分；
-- effective risk bets；
-- 滚动和分年度风险集中度。
+```text
+Train / select weights on the previous 3 years
+Validate on the next 12 months fully out of sample
+Roll forward and repeat
+```
 
-黄金加入的核心价值，就是检验它是否真的提供一个不同于股票成长因子的风险来源。
+The test period cannot participate in parameter selection for that window.
 
-## 5. 长期收益默认用显式总收益
+## 4. Capital diversification is not the same as risk diversification
 
-默认：
+Five equal capital weights do not imply five equal risk contributions.
+
+`risk_analysis.py` evaluates:
+
+- volatility;
+- correlation;
+- component risk contribution;
+- risk share;
+- diversification ratio;
+- first PCA component;
+- effective risk bets;
+- rolling and calendar-year risk concentration.
+
+The main purpose of adding gold is to test whether it truly contributes a risk source that differs from equity growth factors.
+
+## 5. Use explicit total returns for long-term analysis by default
+
+Default return construction:
 
 ```text
 Longbridge actual + dividends.csv
 ```
 
-需要看原始价格、整手和费用敏感性时：
+When raw-price, board-lot, and transaction-cost sensitivity matter:
 
 ```bash
 python backtest.py --adjust actual
 ```
 
-`adjustment_analysis.py` 用于 actual / explicit total_return / Longbridge forward 三口径对账。
-
-## 6. Sharpe 使用历史无风险利率
-
-Sharpe 不再默认无风险利率为 0。项目维护 `risk_free.csv`，保存 **中债国债收益率曲线 1 年期**历史收益率；`update_risk_free.py` 通过 AKShare `bond_china_yield` 从中国债券信息网口径更新快照。
-
-每个 ETF 交易日只使用**当日或此前最近一个已公布**的 1 年期国债收益率，严格向后匹配，不使用未来数据。年化收益率按 242 个交易日换算成等效日收益，Sharpe 基于组合日收益减去对应日无风险收益后计算。
-
----
-
-# 数据对齐规则
-
-早期版本要求所有 ETF 当天都有价格，使用日期 `inner join`。这会导致某一只 ETF 某天停牌、缺数据或数据源遗漏时，整天从组合历史中消失。
-
-现在改为：
+`adjustment_analysis.py` reconciles three return conventions:
 
 ```text
-所有标的日期取并集
-↓
-每只 ETF 先有至少一个真实价格后才进入共同研究区间
-↓
-某天该 ETF 无价格：估值使用上一有效收盘价
-↓
-同时标记该 ETF 当天不可交易
-↓
-其他有行情的 ETF 当天仍可正常参与策略
+actual / explicit total_return / Longbridge forward
 ```
 
-因此：
+## 6. Sharpe uses historical risk-free rates
 
-- **估值连续**；
-- 不会因为一只 ETF 缺一天行情而删除整天；
-- 不会在停牌 / 缺行情日用前值假装成交；
-- synthetic test 没有 `tradable_*` 列时仍按全部可交易处理，兼容原有测试和研究函数。
+Sharpe no longer assumes a zero risk-free rate.
+
+The project maintains `risk_free.csv`, which stores historical **1-year China government bond yield curve** data. `update_risk_free.py` refreshes the snapshot through AKShare's `bond_china_yield` interface using ChinaBond data conventions.
+
+For each ETF trading day, the framework uses only the 1-year government-bond yield published **on that date or the most recent prior date**. Matching is strictly backward-looking, with no future information.
+
+Annualized yields are converted into equivalent daily returns using 242 trading days, and Sharpe is calculated from portfolio daily returns minus the corresponding daily risk-free return.
 
 ---
 
-# 项目结构
+# Data Alignment Rules
 
-| 文件 | 作用 |
+Earlier versions required every ETF to have a valid price on the same date and used a date `inner join`. If one ETF was suspended, missing, or omitted by the data source on a given day, the entire date disappeared from portfolio history.
+
+The current rule is:
+
+```text
+Take the union of all instrument dates
+↓
+Only enter the shared research window after each ETF has at least one real price
+↓
+If an ETF has no price on a date:
+use the previous valid close for valuation
+↓
+Mark that ETF as non-tradable on that date
+↓
+Other ETFs with valid data can still participate normally
+```
+
+Therefore:
+
+- **portfolio valuation remains continuous**;
+- one ETF missing a single trading day does not delete the whole date;
+- forward-filled prices are never used to fake an executable trade on a suspension / missing-data day;
+- synthetic tests without `tradable_*` columns still treat all assets as tradable, preserving compatibility with existing tests and research functions.
+
+---
+
+# Project Structure
+
+| File | Purpose |
 | --- | --- |
-| `backtest.py` | 稳定基线：定投 + 固定周期再平衡 |
-| `adaptive_strategy.py` | 低配优先定投、周期 / 阈值再平衡 |
-| `weight_sweep.py` | 权重网格 + 稳健多指标排名 |
-| `policy_sweep.py` | 权重 + 定投方式 + 再平衡规则联合搜索 |
-| `walk_forward.py` | 严格时间顺序样本外验证 |
-| `risk_analysis.py` | 相关性、风险贡献、PCA、滚动风险 |
-| `adjustment_analysis.py` | actual vs forward 对账 |
-| `dividend_data.py` / `dividends.csv` | 显式 ETF 现金分红与总收益重建 |
-| `update_dividends.py` | AKShare 双数据源校验并更新分红快照 |
-| `risk_free_data.py` / `risk_free.csv` | 历史 1 年期中债国债无风险利率与 Sharpe 对齐 |
-| `update_risk_free.py` | 更新中债 1 年期国债收益率快照 |
-| `longbridge_data.py` | Longbridge 日 K 与缓存 |
-| `config.py` | ETF universe、研究边界和基础参数 |
+| `backtest.py` | Stable baseline: DCA + fixed-period rebalancing |
+| `adaptive_strategy.py` | Underweight-first DCA, periodic / threshold rebalancing |
+| `weight_sweep.py` | Weight grid search + robust multi-metric ranking |
+| `policy_sweep.py` | Joint search over weights + contribution method + rebalancing rule |
+| `walk_forward.py` | Strict chronological out-of-sample validation |
+| `risk_analysis.py` | Correlation, risk contribution, PCA, rolling risk |
+| `adjustment_analysis.py` | Reconciliation of actual vs forward-adjusted conventions |
+| `dividend_data.py` / `dividends.csv` | Explicit ETF cash dividends and total-return reconstruction |
+| `update_dividends.py` | Cross-check and refresh dividend snapshots from two AKShare sources |
+| `risk_free_data.py` / `risk_free.csv` | Historical 1-year China government-bond risk-free rates and Sharpe alignment |
+| `update_risk_free.py` | Refresh the 1-year government-bond yield snapshot |
+| `longbridge_data.py` | Longbridge daily bars and local cache handling |
+| `config.py` | ETF universe, research boundaries, and base parameters |
 
 ---
 
-# 推荐研究顺序
+# Recommended Research Workflow
 
 ```bash
 python adjustment_analysis.py
@@ -197,46 +214,46 @@ python walk_forward.py
 python risk_analysis.py
 ```
 
-其中最重要的是：
+The most important steps are:
 
-1. `weight_sweep.py` 看权重稳定区域；
-2. `policy_sweep.py` 看权重和执行规则是否互相依赖；
-3. `walk_forward.py` 看样本外是否还能成立；
-4. `risk_analysis.py` 看资本权重背后的真实风险集中度；
-5. `adjustment_analysis.py` 检查复权口径是否改变结论。
+1. `weight_sweep.py` — inspect stable weight regions rather than one exact winner;
+2. `policy_sweep.py` — test whether weights and execution rules depend on each other;
+3. `walk_forward.py` — verify whether the result survives out of sample;
+4. `risk_analysis.py` — inspect the true risk concentration behind capital weights;
+5. `adjustment_analysis.py` — verify whether return-adjustment conventions change the conclusion.
 
 ## `weight_sweep.py`
 
-默认评分：
+Default score:
 
 ```text
-全周期 XIRR          25%
-最差分段 XIRR        25%
-全周期 Sharpe        15%
-最大回撤             15%
-分段平均 XIRR        10%
-分段稳定性            5%
-权重分散度 / HHI      5%
+Full-period XIRR             25%
+Worst-segment XIRR           25%
+Full-period Sharpe           15%
+Maximum drawdown             15%
+Average segment XIRR         10%
+Segment stability             5%
+Weight diversification / HHI  5%
 ```
 
-不要只看第一名。更重要的是 Top 区域范围。
+Do not focus only on rank #1. The shape and stability of the top region matter more.
 
 ## `policy_sweep.py`
 
-默认 16 种规则：
+The default set contains 16 execution rules:
 
 ```text
-target / underweight 定投
-周期再平衡：1 / 3 / 6 / 12 月
-阈值再平衡：3% / 5% / 10%
-none：不主动卖出式再平衡
+Contribution: target / underweight
+Periodic rebalance: 1 / 3 / 6 / 12 months
+Threshold rebalance: 3% / 5% / 10%
+none: no active sell-side rebalancing
 ```
 
-阶段 1：全权重网格 × 全执行规则。
+Stage 1: full weight grid × all execution rules.
 
-阶段 2：每种规则保留自己的 Top 候选，再做连续时间分段稳健性验证。
+Stage 2: retain each policy's own top candidates, then validate them across contiguous historical segments for robustness.
 
-重点输出：
+Key outputs:
 
 ```text
 adaptive_joint_screen.csv
@@ -248,29 +265,29 @@ adaptive_top_region.csv
 
 ## `walk_forward.py`
 
-重点看：
+Focus on:
 
-- OOS XIRR；
-- 最差窗口；
-- 相对等权的胜率；
-- 权重稳定性；
-- 黄金是否长期稳定为正权重。
+- OOS XIRR;
+- worst validation window;
+- win rate versus equal weight;
+- weight stability;
+- whether gold retains a consistently positive allocation.
 
-如果某资产在相邻窗口不断从 0% / 10% 跳到上限，不应相信精确比例。
+If an asset repeatedly jumps between 0% / 10% and its upper bound across adjacent windows, the exact weight should not be trusted.
 
 ---
 
 # Longbridge
 
-项目正式市场数据只使用 Longbridge。
+Longbridge is the project's official market-data source.
 
-首次使用：
+First-time authentication:
 
 ```bash
 longbridge auth login
 ```
 
-强制刷新缓存：
+Force-refresh cached data:
 
 ```bash
 python backtest.py --refresh
@@ -281,48 +298,50 @@ python risk_analysis.py --refresh
 python adjustment_analysis.py --refresh
 ```
 
-缓存保存在仓库外，项目不保存 Longbridge 凭据。
+Caches are stored outside the repository, and the project does not store Longbridge credentials.
 
 ---
 
-# 测试
+# Testing
 
 ```bash
 python -m unittest -v
 ```
 
-GitHub Actions 只跑离线测试，不访问 Longbridge 账户。
+GitHub Actions runs offline tests only and does not access the Longbridge account.
 
-测试覆盖包括：
+Current test coverage includes:
 
-- 贡献金额与现金约束；
-- 周期 / 阈值再平衡；
-- underweight 普通月不卖出；
-- 0% 权重 sleeve；
-- 每标的独立权重边界；
-- 缺行情日估值前填与禁止交易；
-- Walk-Forward 无数据泄漏；
-- 风险贡献和 PCA；
-- actual / explicit total_return / forward 对账逻辑；
-- 现金分红总收益重建；
-- 历史无风险利率向后匹配与超额收益 Sharpe。
+- contribution amounts and cash constraints;
+- periodic / threshold rebalancing;
+- no selling during ordinary underweight-contribution months;
+- 0%-weight sleeves;
+- independent per-asset weight boundaries;
+- forward-filled valuation and disabled trading on missing-price days;
+- walk-forward leakage prevention;
+- risk contribution and PCA;
+- reconciliation logic for actual / explicit total_return / forward;
+- cash-dividend total-return reconstruction;
+- backward matching of historical risk-free rates and excess-return Sharpe.
 
 ---
 
-# 当前开发状态
+# Current Development Status
 
-**研究功能到这里收口。**
+**The research feature set is considered complete for now.**
 
-项目已经具备：
+The project already supports:
 
-- 多 ETF 定投回测；
-- 独立资产权重约束；
-- 完整权重网格探索；
-- 定投 / 再平衡联合搜索；
-- Walk-Forward 样本外验证；
-- 风险贡献 / PCA；
-- 复权敏感性；
-- 更稳健的缺失交易日处理；
-- 离线 CI。
+- multi-ETF DCA backtesting;
+- independent asset weight constraints;
+- exhaustive weight-grid exploration;
+- joint DCA / rebalancing policy search;
+- walk-forward out-of-sample validation;
+- risk contribution / PCA analysis;
+- price-adjustment sensitivity analysis;
+- more robust handling of missing trading days;
+- offline CI.
 
-接下来不应继续堆优化器或交易自动化。真正有价值的工作是：**跑真实 Longbridge 历史数据、解释结果、判断稳定区间，然后形成长期资产配置结论。**
+The next valuable step is **not** to add more optimizers or trading automation.
+
+The useful work now is to **run the framework on real Longbridge history, interpret the results, identify stable allocation regions, and turn those findings into a long-term asset-allocation conclusion.**
